@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiro-adapters"
+version = "0.1.0"
+description = "Harness-agnostic adapters that let jcode (or any MCP client) dispatch to Kiro Crew (kirocrew) and Kiro Code (kirocode)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "KooshaPari" }]
+keywords = ["kiro", "kirocrew", "kirocode", "jcode", "mcp", "agent", "adapter"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+kiro-adapter = "kiro_adapters.cli:main"
+kiro-adapter-mcp = "kiro_adapters.mcp_server:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
