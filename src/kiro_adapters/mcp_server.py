@@ -142,7 +142,7 @@ def _dispatch(args: Dict[str, Any]) -> R.AdapterResult:
 
 
 _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
-    "kirocrew_status": lambda _: _crew().status(),
+    "kirocrew_status": lambda _: _crew().status(include_kas=True),
     "kirocrew_agents": lambda _: _crew().list_agents(),
     "kirocrew_spawn_list": lambda _: _crew().spawn_list(),
     "kirocode_status": lambda _: _code().status(),
