@@ -140,6 +140,55 @@ The server exposes ten tools: `kirocrew_status`, `kirocrew_agents`,
 `kirocode_ask`, and `kiro_dispatch`, which routes one prompt to either
 harness. Parameter names and result codes are in `docs/ADAPTER-CONTRACT.md`.
 
+## The jcode harness-API bridge
+
+The `jcode_bridge` package points the same idea the other way: instead of Kiro
+being a tool jcode calls, jcode becomes a session another agent can drive.
+`jcode api --stdio` is a child process speaking newline-delimited JSON, so the
+caller keeps a *session* rather than a process: text streams as it arrives, tool
+calls and token usage are visible, and more than one turn can be sent before
+disconnecting. Details, protocol frames, and payload keys are in
+[docs/JCODE-API.md](docs/JCODE-API.md).
+
+```mermaid
+flowchart LR
+    client["agent or MCP client"]
+    bridge["jcode-bridge<br/>MCP stdio server"]
+    daemon["jcode api --stdio<br/>harness API v1"]
+    client -->|"MCP stdio, JSON-RPC 2.0"| bridge
+    bridge -->|"NDJSON, one child per connection"| daemon
+```
+
+CLI, where `--json` is a global flag and precedes the subcommand:
+
+```bash
+jcode-bridge --json api-health          # handshake and ping, no session
+jcode-bridge api-ask "list the tests" --cwd . --timeout 120
+jcode-bridge --json api-ask "step one" --keep-session
+jcode-bridge api-sessions --limit 10
+```
+
+MCP tools on the `jcode-bridge` server: `jcode_api_health`, `jcode_api_ask`
+(`prompt` required; `cwd`, `timeout_secs`, `keep_session`) and
+`jcode_api_sessions` (`limit`, `timeout_secs`), alongside the task-backend
+tools `jcode_health`, `jcode_run`, `jcode_task_start`, `jcode_task_status`,
+`jcode_task_output`, `jcode_task_cancel` and `jcode_task_list`.
+
+One protocol detail is easy to get wrong and is worth stating here:
+`send_message` is a **notify**, not a request. The daemon does not reply to it;
+waiting for a reply blocks until the turn times out. The daemon acknowledges
+indirectly with a `message_accepted` event once the agent has the message
+queued, and the bridge treats that event as the acknowledgement.
+
+### What the bridge is not
+
+Kiro Crew's `agent.acp_backend` is a **closed enum**. It selects from the
+backends Kiro Crew ships with and cannot be pointed at `jcode api --stdio` or at
+any other external harness. So jcode cannot be Kiro Crew's own runtime; it can
+only be a tool that Kiro Crew, or any other agent, calls. Presenting jcode as
+Kiro Crew's `codex` backend would misrepresent what is running, which is why the
+bridge always reports `harness: "jcode-api"`.
+
 ## Verification status
 
 Be precise about what has and has not been exercised.
@@ -154,7 +203,11 @@ Be precise about what has and has not been exercised.
 | `kirocode` command surface | Implemented, not verified. No `kirocode`, `kiro-cli` or `kiro` binary was present on 2026-10-27. |
 | MCP server | Implemented. JSON-RPC 2.0 over stdio, protocol `2024-11-05`, ten tools advertised. |
 | CLI | Implemented. Subcommands mirror the MCP tools and return the same envelope. |
-| Test suite | Empty. `make test` reports `Ran 0 tests` and exits non-zero. |
+| `jcode api --stdio` handshake | Verified 2026-10-28 against `jcode 0.99.1`. `api-health` returned `OK`, `detail: "jcode-harness-api-bridge/0.1.0 (1)"`, negotiated version 1, `ping: true`. |
+| `jcode` harness-API turn | Verified 2026-10-28. `api-ask` returned `OK` with `BRIDGE_OK` and `JSON_OK`: `message_accepted`, ordered `text_delta`s, `turn_done`, `answer` and `answer_chars` in the envelope. |
+| `jcode_api_sessions` | Exercised 2026-10-28. The released daemon ignores `limit`, so the bridge bounds the list client-side. |
+| MCP server, `jcode-bridge` | Implemented. Advertises the three `jcode_api_*` tools plus the seven task-backend tools; covered by `tests/test_jcode_bridge_wiring.py`. |
+| Test suite | `PYTHONPATH=src python3 -m unittest discover -s tests` reports `Ran 272 tests`, `OK`, on 2026-10-28. |
 
 The `kirocrew` flags the adapter passes were each checked against the live
 `--help` output of `chat`, `spawn`, `run`, `token`, `status` and
@@ -174,6 +227,9 @@ so treat those rows as untested code paths rather than proven behaviour.
 
 - [Adapter contract](docs/ADAPTER-CONTRACT.md): tool schemas, result codes,
   readiness gates, redaction rules, and how to add a third harness.
+- [jcode harness API](docs/JCODE-API.md): daemon protocol frames, CLI
+  subcommands, MCP tools, payload keys, verification status, and why jcode
+  cannot be Kiro Crew's ACP backend.
 - [Operations runbook](docs/OPERATIONS.md): readiness checks, remediation for
   every failure code, kirocode argv profiles, troubleshooting table.
 - [Model Context Protocol](https://modelcontextprotocol.io)

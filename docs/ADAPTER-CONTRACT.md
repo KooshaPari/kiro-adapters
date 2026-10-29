@@ -16,7 +16,7 @@ Every adapter call returns one JSON object with these ten keys, in this order.
 | Key | Type | Meaning |
 |---|---|---|
 | `ok` | bool | `true` only when `code` is `OK`. |
-| `harness` | string | Which adapter produced this: `kirocrew` or `kirocode`. |
+| `harness` | string | Which adapter produced this: `kirocrew` or `kirocode`. The jcode bridge reports `jcode-api` for harness-API actions and `jcode` for task-backend actions. |
 | `action` | string | The action name, matching the adapter method. |
 | `code` | string | One of the six result codes below. |
 | `detail` | string | One-line human summary. Never parse it. |
@@ -46,6 +46,14 @@ happens, the tail is `...[truncated N chars]`. Source:
 
 ---
 
+### The jcode bridge uses the same envelope
+
+`jcode_bridge` (see `docs/JCODE-API.md`) returns the same ten keys and the same six codes, so a
+client that already branches on `code` needs no new vocabulary. Two harness values distinguish it:
+`jcode-api` for the daemon-API actions and `jcode` for the one-shot task backend. `BLOCKED` is not
+produced by the API actions; a spawn failure is `NOT_INSTALLED`, a deadline overrun is `TIMEOUT`,
+and a protocol violation or invalid argument is `ERROR`.
+
 ## 2. Tool surface
 
 Ten tools.
@@ -73,6 +81,21 @@ Parameter semantics:
   and test verification step after each step of the spec run.
 - `ttl` on `kirocrew_dashboard_url` maps to `--ttl`. The CLI default is 20h.
 - `harness` on `kiro_dispatch` is exactly `"kirocrew"` or `"kirocode"`.
+
+### jcode bridge tools, a separate server
+
+The `jcode-bridge` MCP server is not part of the ten above; it advertises its own ten tools and
+follows this same contract. Three of them are the daemon-API surface:
+
+| Tool | Required | Optional | Backend action | Cost |
+|---|---|---|---|---|
+| `jcode_api_health` | none | none | `JcodeApiBackend.health` | one spawn, no session |
+| `jcode_api_ask` | `prompt` | `cwd`, `timeout_secs`, `keep_session` | `JcodeApiBackend.ask` | one model call |
+| `jcode_api_sessions` | none | `limit`, `timeout_secs` | `JcodeApiBackend.sessions` | none |
+
+The remaining seven are the one-shot task backend: `jcode_health`, `jcode_run`, `jcode_task_start`,
+`jcode_task_status`, `jcode_task_output`, `jcode_task_cancel`, `jcode_task_list`. `timeout_secs` is
+bounded to `(0, 86400]` at the MCP edge.
 
 ### Default timeouts
 
@@ -195,5 +218,15 @@ All modules below live in `src/kiro_adapters/`.
 | CLI | `cli.py` | `kiro-adapter` subcommands mirror the same actions and return the same envelope. `--json` prints the envelope, exit code is 0 when `ok` and 1 when not. |
 | kirocrew adapter | `kirocrew.py` | Implements the kirocrew side. |
 | kirocode adapter | `kirocode.py` | Implements the kirocode side. |
+
+The jcode bridge lives in `src/jcode_bridge/` and returns the same envelope.
+
+| Surface | Module | Notes |
+|---|---|---|
+| daemon-API backend | `api.py` | Spawns `jcode api --stdio` and maps harness-API outcomes onto the envelope. `harness` is `jcode-api`. |
+| protocol client | `api_client.py` | NDJSON frame state machine, version-negotiated `hello`/`hello_ok`, session lifecycle, turn collection. |
+| task backend | `backend.py` | One-shot `jcode run --json` and detached tasks. `harness` is `jcode`. |
+| MCP server | `mcp_server.py` | Server name `jcode-bridge`, protocol `2024-11-05`, the three `jcode_api_*` tools plus seven task tools. |
+| CLI | `cli.py` | `jcode-bridge` with `api-health`, `api-ask`, `api-sessions` and the task subcommands. `--json` is a global flag. |
 
 The current verification status of each surface is recorded in `README.md`.
