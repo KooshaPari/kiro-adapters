@@ -186,14 +186,31 @@ waiting for a reply blocks until the turn times out. The daemon acknowledges
 indirectly with a `message_accepted` event once the agent has the message
 queued, and the bridge treats that event as the acknowledgement.
 
-### What the bridge is not
+### jcode as Kiro Crew's own backend
 
-Kiro Crew's `agent.acp_backend` is a **closed enum**. It selects from the
-backends Kiro Crew ships with and cannot be pointed at `jcode api --stdio` or at
-any other external harness. So jcode cannot be Kiro Crew's own runtime; it can
-only be a tool that Kiro Crew, or any other agent, calls. Presenting jcode as
-Kiro Crew's `codex` backend would misrepresent what is running, which is why the
-bridge always reports `harness: "jcode-api"`.
+Kiro Crew's `agent.acp_backend` is a **closed enum**, so there is no config
+value that names jcode. The enum is not the only lever, though: each backend
+slot resolves the ACP binary it launches through an operator override, and the
+`codex` slot's own gate (`SESSION_CONFIG` routing) accepts a harness that
+advertises a `mode` config option and enforces `mode=read-only`. jcode's ACP
+now does exactly that, so the slot is filled by a real restriction rather
+than by a claim.
+
+```bash
+CODEX_ACP_BIN=~/bin/jcode-acp-shim kirocrew run TASK.md
+```
+
+`~/bin/jcode-acp-shim` execs `jcode acp`. The agent Kiro Crew spawns is jcode
+and reports `agentInfo.name` as `jcode`; the `codex` in the logs is the slot
+Kiro Crew was told to use, not the agent's identity.
+
+The boundary worth stating: `read-only` is the only mode, so a Kiro session
+running on jcode through this slot **cannot write**. Every write-capable tool
+is disabled in the session's tool set, so it is not offered to the model at
+all.
+
+This is separate from the bridge above. The bridge is jcode calling *into*
+Kiro Crew; this is Kiro Crew running *on* jcode.
 
 ## Verification status
 
@@ -213,6 +230,9 @@ Be precise about what has and has not been exercised.
 | `jcode` harness-API turn | Verified 2026-10-28. `api-ask` returned `OK` with `BRIDGE_OK` and `JSON_OK`: `message_accepted`, ordered `text_delta`s, `turn_done`, `answer` and `answer_chars` in the envelope. |
 | `jcode_api_sessions` | Exercised 2026-10-28. The released daemon ignores `limit`, so the bridge bounds the list client-side. |
 | MCP server, `jcode-bridge` | Implemented. Advertises the three `jcode_api_*` tools plus the seven task-backend tools; covered by `tests/test_jcode_bridge_wiring.py`. |
+| Kiro Crew as a client of jcode | Verified 2026-10-28. A Kiro Crew agent invoked `@jcode-bridge/jcode_api_ask` and received `KIRO_BRIDGE_OK`; the call is an auto-approved tool invocation in `~/.kiro/crew/security_events.jsonl`. |
+| Kiro Crew running ON jcode | Verified 2026-10-29. Two Kiro Crew sessions with `CODEX_ACP_BIN=~/bin/jcode-acp-shim` answered `JCODE_BACKEND_OK`; the ledger records `governance_decision / agent_backend:codex / allowed`. |
+| Read-only enforcement | Verified 2026-10-29 at the daemon level: with `write`, `edit` and `bash` disabled they are absent from the session's tool set while `read` remains. |
 | Test suite | `PYTHONPATH=src python3 -m unittest discover -s tests` reports `Ran 272 tests`, `OK`, on 2026-10-28. |
 
 The `kirocrew` flags the adapter passes were each checked against the live

@@ -198,6 +198,8 @@ Measured 2026-10-28 on this machine, macOS arm64, `jcode 0.99.1`.
 | `api-sessions` | Exercised against the same daemon; `limit` enforced client-side as described above. |
 | MCP tools | Advertised by `jcode-bridge-mcp --selftest`; covered by `tests/test_jcode_bridge_wiring.py` against a fake handshake reporting `jcode-harness-api-bridge/0.1.0`. |
 | Kiro Crew calls jcode | `OK`, end to end. A Kiro Crew agent invoked `@jcode-bridge/jcode_api_ask` and received the answer `KIRO_BRIDGE_OK` from jcode. The call is recorded as an auto-approved tool invocation in `~/.kiro/crew/security_events.jsonl`, and the answer appears in the task-runner transcript. |
+| Kiro Crew runs ON jcode | `OK`, end to end. Two Kiro Crew sessions with `CODEX_ACP_BIN=~/bin/jcode-acp-shim` completed their task and answered `JCODE_BACKEND_OK`. The security ledger records `governance_decision / agent_backend:codex / allowed`, and the transcript shows the answer. |
+| Read-only enforcement | `OK`, proved at the daemon level. With `write`, `edit` and `bash` disabled those tools are absent from the session's tool definitions while `read` is still offered (`crates/jcode-app-core/src/tool/tests/sdk.rs`). |
 
 Re-run the health probe before trusting any of the above on a different host:
 
@@ -240,29 +242,58 @@ takes a while.
 
 ---
 
-## 7. Honest limitation: jcode cannot be Kiro Crew's own runtime
+## 7. Kiro Crew's backend slots, and what jcode fills
 
 Kiro Crew's `agent.acp_backend` is a **closed enum**. It selects from a fixed
 set of backends the application ships with; it is not an arbitrary command slot.
-It cannot be pointed at `jcode api --stdio`, or at any other external harness,
-by configuration.
+So there is no config value to set to "run Kiro Crew on jcode".
+
+What changed is that the enum was never the only lever. Each backend slot
+resolves the ACP binary it launches through an **operator override**:
+
+| Slot | Override | Shape |
+|---|---|---|
+| `codex` | `CODEX_ACP_BIN` | an executable file, run **as-is** with no arguments |
+| `opencode` | `OPENCODE_BIN` | an executable file, run as `<binary> acp` |
+
+The `codex` slot's permission routing is `SESSION_CONFIG`, so a harness in
+that slot is only accepted when it advertises a `mode` config option and
+accepts `mode=read-only`. jcode's ACP now implements exactly that, so the
+slot's own gate is satisfied by a real, enforced restriction.
+
+`~/bin/jcode-acp-shim` is that override. It execs `jcode acp`, and it is the
+only piece of glue:
+
+```bash
+CODEX_ACP_BIN=~/bin/jcode-acp-shim kirocrew run TASK.md
+```
 
 Consequences, stated without hedging:
 
-- **jcode is not a Kiro Crew runtime.** It cannot be installed as, or substituted
-  for, Kiro Crew's ACP backend. There is no setting that makes Kiro Crew run on
-  jcode.
-- **Kiro Crew can call jcode as a tool.** The reverse direction works and is what
-  this package exists for: jcode (or any MCP client) dispatches work into Kiro
-  Crew over the `kirocrew` CLI, and jcode itself is reachable over its harness
-  API from an agent that chooses to call it.
-- **Impersonating a known backend is not an option.** Aliasing jcode to Kiro
-  Crew's `codex` backend, or presenting it as one, misrepresents what is running.
-  The bridge always reports `harness: "jcode-api"` for exactly this reason.
+- **jcode can serve as Kiro Crew's ACP backend.** The agent Kiro Crew spawns is
+  jcode, and it says so: `agentInfo.name` is `jcode`.
+- **The slot id in the logs says `codex`.** That is the *slot* Kiro Crew was
+  told to use, not a claim about the agent. The agent reports itself as jcode.
+- **The only mode is `read-only`.** A Kiro session running on jcode through
+  this slot cannot write: every write-capable tool is disabled in the
+  session's tool set, so it is not offered to the model at all. A mode this
+  agent does not implement is refused rather than accepted and ignored.
+- **Kiro Crew can also call jcode as a tool.** The reverse direction works
+  too: jcode (or any MCP client) dispatches work into Kiro Crew over the
+  `kirocrew` CLI, and jcode itself is reachable over its harness API from an
+  agent that chooses to call it.
 
-So the correct description of the relationship is *peer tool call*, not
-*runtime substitution*. Any documentation, dashboard, or agent prompt that
-implies jcode is Kiro Crew's engine is wrong.
+So the relationship is now available in both directions, and each direction is
+labelled with what it actually is.
+
+### Verified
+
+Two Kiro Crew sessions run with `CODEX_ACP_BIN=~/bin/jcode-acp-shim` completed
+their task and answered `JCODE_BACKEND_OK`, and Kiro Crew's security ledger
+recorded `governance_decision / agent_backend:codex / allowed` for the
+backend. The read-only denial is proved at the daemon level: with `write`,
+`edit` and `bash` disabled those tools are absent from the session's tool
+definitions while `read` is still offered.
 
 ---
 
