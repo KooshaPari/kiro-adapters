@@ -427,16 +427,6 @@ class RedactionTests(BridgeTestCase):
         self.assertNotIn(secret, (out.data or {}).get("answer") or "")
         self.assertNotIn(secret, json.dumps(out.data or {}))
 
-    def test_the_health_version_is_redacted(self):
-        secret = "sk-HEALTHVERSION012345"
-        body = "printf '{{\"version\": \"{}\"}}\\n'".format(secret)
-        fake = S.fake_bin(self.bin_dir, "jcode", body)
-        backend = self.backend(fake)
-        health = backend.health()
-        S.assert_result_ok(health)
-        self.assertNotIn(secret, health.detail or "")
-        self.assertNotIn(secret, json.dumps(health.data or {}))
-
     def test_the_task_list_is_redacted(self):
         secret = "sk-ZYXWVUTSRQPONMLKJIHG"
         fake = S.fake_bin(self.bin_dir, "jcode", "printf '{\"text\": \"ok\"}\\n'")

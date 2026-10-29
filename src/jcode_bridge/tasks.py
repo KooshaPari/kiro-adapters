@@ -43,6 +43,7 @@ from .payload import (
     ensure_private_dir,
     extract_answer,
     is_inside,
+    option_problem,
     pid_alive,
     prompt_problem,
     read_json,
@@ -125,6 +126,16 @@ def start(
     timeout: float = 900.0,
 ) -> R.AdapterResult:
     fault = prompt_problem(prompt)
+    if fault is None:
+        for name, value in (
+            ("provider", provider),
+            ("model", model),
+            ("tools", tools),
+            ("disabled_tools", disabled_tools),
+        ):
+            fault = option_problem(name, value)
+            if fault is not None:
+                break
     if fault is not None:
         return R.AdapterResult.failure(HARNESS, "start", R.ERROR, fault)
     checked, problem = _validate_timeout(timeout)

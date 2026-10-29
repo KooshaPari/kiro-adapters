@@ -22,7 +22,7 @@ from kiro_adapters.redact import redact, redact_obj
 from kiro_adapters.runner import CommandResult, resolve_binary, run as run_command
 
 from . import tasks as task_store
-from .payload import extract_answer, prompt_problem
+from .payload import extract_answer, option_problem, prompt_problem
 
 HARNESS = "jcode"
 ENV_VAR = "JCODE_BRIDGE_BIN"
@@ -76,16 +76,48 @@ def _validate_cwd(cwd: Optional[str]) -> Optional[str]:
     return None
 
 
+# A spawn failure that names one of these exceptions means the binary itself
+# could not be used: it is not installed, or it is installed but not
+# executable. Nothing else is a statement about the installation.
+UNUSABLE_BINARY_ERRORS = ("FileNotFoundError", "PermissionError")
+
+
 def _spawn_error_code(spawn_error: str) -> str:
     """Return the error code that describes a spawn failure.
 
-    Only a genuinely absent binary means "not installed". Every other spawn
-    failure, an argument list that is too long or a binary that cannot be
-    executed, is an error of this call and not a missing installation.
+    Only a genuinely absent or unusable binary means "not installed". Every
+    other spawn failure, an argument list that is too long for example, is an
+    error of this call and not a missing installation. The runner records the
+    failure as "<ExceptionTypeName>: <message>", so the type name at the start
+    of the string decides, and an unrecognised name is treated as an error.
     """
-    if spawn_error.startswith("FileNotFoundError"):
+    name = spawn_error.split(":", 1)[0].strip()
+    if name in UNUSABLE_BINARY_ERRORS:
         return R.NOT_INSTALLED
     return R.ERROR
+
+
+def _option_fault(
+    provider: Optional[str],
+    model: Optional[str],
+    tools: Optional[str],
+    disabled_tools: Optional[str],
+) -> Optional[str]:
+    """Return the first problem with an option value, if any.
+
+    The options travel to the child as argv elements, so they are held to the
+    same rules as the prompt: text only, and no NUL byte.
+    """
+    for name, value in (
+        ("provider", provider),
+        ("model", model),
+        ("tools", tools),
+        ("disabled_tools", disabled_tools),
+    ):
+        fault = option_problem(name, value)
+        if fault is not None:
+            return fault
+    return None
 
 
 def _redact_result(result: R.AdapterResult) -> R.AdapterResult:
@@ -242,7 +274,9 @@ class JcodeBackend:
         cwd: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> R.AdapterResult:
-        fault = prompt_problem(prompt)
+        fault = prompt_problem(prompt) or _option_fault(
+            provider, model, tools, disabled_tools
+        )
         if fault is not None:
             return R.AdapterResult.failure(HARNESS, "run", R.ERROR, fault)
         cwd_problem = _validate_cwd(cwd)
@@ -281,7 +315,9 @@ class JcodeBackend:
         cwd: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> R.AdapterResult:
-        fault = prompt_problem(prompt)
+        fault = prompt_problem(prompt) or _option_fault(
+            provider, model, tools, disabled_tools
+        )
         if fault is not None:
             return R.AdapterResult.failure(HARNESS, "start", R.ERROR, fault)
         cwd_problem = _validate_cwd(cwd)

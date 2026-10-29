@@ -75,6 +75,21 @@ def prompt_problem(prompt: Any) -> Optional[str]:
     return None
 
 
+def option_problem(name: str, value: Any) -> Optional[str]:
+    """Return a message when an option value cannot reach the operating system.
+
+    Options travel as argv elements next to the prompt, so they carry the same
+    rules: the value has to be text and it cannot contain a NUL byte.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return "{} must be a string, got {}".format(name, type(value).__name__)
+    if "\x00" in value:
+        return "{} must not contain a NUL byte".format(name)
+    return None
+
+
 def pid_alive(pid: Optional[int]) -> bool:
     """True when ``pid`` exists and we are allowed to signal it."""
     if not pid:

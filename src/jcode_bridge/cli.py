@@ -11,6 +11,7 @@ import sys
 from typing import List, Optional, Sequence
 
 from . import __version__
+from .api import JcodeApiBackend
 from .backend import JcodeBackend
 
 
@@ -39,6 +40,27 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("health", help="jcode binary, version and task home")
     sub.add_parser("list", help="recent detached tasks").add_argument("--limit", type=int, default=20)
 
+    api_health = sub.add_parser(
+        "api-health", help="check the jcode harness API (handshake and ping)"
+    )
+    api_health.add_argument("--timeout", type=float, default=30.0)
+
+    api_ask = sub.add_parser(
+        "api-ask", help="run one turn over a live jcode harness-API session"
+    )
+    api_ask.add_argument("prompt", help="prompt text")
+    api_ask.add_argument("--cwd", help="working directory")
+    api_ask.add_argument("--timeout", type=float, default=900.0, help="seconds")
+    api_ask.add_argument(
+        "--keep-session", action="store_true", help="keep the session for follow-ups"
+    )
+
+    api_sessions = sub.add_parser(
+        "api-sessions", help="list sessions visible to the harness API"
+    )
+    api_sessions.add_argument("--limit", type=int, default=20)
+    api_sessions.add_argument("--timeout", type=float, default=30.0)
+
     def add_task_flags(target: argparse.ArgumentParser) -> None:
         target.add_argument("prompt", help="task text")
         target.add_argument("--provider", help="provider name")
@@ -62,6 +84,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_parser().parse_args(list(argv) if argv is not None else None)
     backend = JcodeBackend()
+    api = JcodeApiBackend()
 
     if args.command == "health":
         return _emit(backend.health(), args.json)
@@ -73,6 +96,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _emit(backend.cancel(args.task_id), args.json)
     if args.command == "output":
         return _emit(backend.output(args.task_id, args.tail_chars), args.json)
+
+    if args.command == "api-health":
+        return _emit(api.health(timeout=args.timeout), args.json)
+    if args.command == "api-ask":
+        return _emit(
+            api.ask(
+                args.prompt,
+                working_dir=args.cwd,
+                timeout=args.timeout,
+                keep_session=args.keep_session,
+            ),
+            args.json,
+        )
+    if args.command == "api-sessions":
+        return _emit(
+            api.sessions(limit=args.limit, timeout=args.timeout), args.json
+        )
 
     common = dict(
         provider=args.provider,

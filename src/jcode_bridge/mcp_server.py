@@ -16,6 +16,7 @@ from kiro_adapters import result as R
 from kiro_adapters.redact import redact, redact_obj
 
 from . import __version__
+from .api import JcodeApiBackend
 from .backend import JcodeBackend
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -29,6 +30,7 @@ INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
 _BACKEND: Optional[JcodeBackend] = None
+_API_BACKEND: Optional[JcodeApiBackend] = None
 
 
 def backend() -> JcodeBackend:
@@ -38,10 +40,19 @@ def backend() -> JcodeBackend:
     return _BACKEND
 
 
+def api_backend() -> JcodeApiBackend:
+    """The daemon-API backend, kept separate so it can be pointed at a fake."""
+    global _API_BACKEND
+    if _API_BACKEND is None:
+        _API_BACKEND = JcodeApiBackend()
+    return _API_BACKEND
+
+
 def reset_backend() -> None:
     """Drop the cached backend so a test can point it at a fake binary."""
-    global _BACKEND
+    global _BACKEND, _API_BACKEND
     _BACKEND = None
+    _API_BACKEND = None
 
 
 _PROP_TYPES = {
@@ -55,6 +66,7 @@ _PROP_TYPES = {
     "task_id": "string",
     "tail_chars": "number",
     "limit": "number",
+    "keep_session": "boolean",
 }
 
 _PROP_DESCRIPTIONS = {
@@ -68,6 +80,7 @@ _PROP_DESCRIPTIONS = {
     "task_id": "Task id returned by jcode_task_start.",
     "tail_chars": "How many trailing characters of output to return.",
     "limit": "Maximum number of tasks to list.",
+    "keep_session": "Keep the session open for follow-up messages.",
 }
 
 # (name, description, property names, required property names)
@@ -89,6 +102,24 @@ _TOOLS = [
     ("jcode_task_output", "Captured output and answer of a detached task.", "task_id tail_chars", "task_id"),
     ("jcode_task_cancel", "Stop a detached task and its process group.", "task_id", "task_id"),
     ("jcode_task_list", "Most recent detached tasks with their state.", "limit", ""),
+    (
+        "jcode_api_health",
+        "Check the jcode harness API: spawn, handshake and ping without a session.",
+        "",
+        "",
+    ),
+    (
+        "jcode_api_ask",
+        "Run one turn over a live jcode harness-API session and return the answer.",
+        "prompt cwd timeout_secs keep_session",
+        "prompt",
+    ),
+    (
+        "jcode_api_sessions",
+        "List the jcode sessions the harness API can see.",
+        "limit timeout_secs",
+        "",
+    ),
 ]
 
 
@@ -179,6 +210,8 @@ _ARG_RULES: Dict[str, Dict[str, str]] = {
     "jcode_task_start": {"timeout_secs": "timeout"},
     "jcode_task_output": {"tail_chars": "positive_int"},
     "jcode_task_list": {"limit": "positive_int"},
+    "jcode_api_ask": {"timeout_secs": "timeout"},
+    "jcode_api_sessions": {"timeout_secs": "timeout", "limit": "positive_int"},
 }
 
 
@@ -227,6 +260,30 @@ def _output(args: Dict[str, Any]) -> R.AdapterResult:
     return backend().output(_task_id(args), tail_chars=int(tail_chars))
 
 
+def _api_ask(args: Dict[str, Any]) -> R.AdapterResult:
+    prompt = args.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("prompt must be a non-empty string")
+    kwargs: Dict[str, Any] = {"prompt": prompt}
+    cwd = _optional_str(args, "cwd")
+    if cwd is not None:
+        kwargs["working_dir"] = cwd
+    keep = args.get("keep_session")
+    if isinstance(keep, bool):
+        kwargs["keep_session"] = keep
+    kwargs.update(_timeout_kwargs(args))
+    return api_backend().ask(**kwargs)
+
+
+def _api_sessions(args: Dict[str, Any]) -> R.AdapterResult:
+    limit = _number(args, "limit")
+    kwargs: Dict[str, Any] = {}
+    if limit is not None:
+        kwargs["limit"] = int(limit)
+    kwargs.update(_timeout_kwargs(args))
+    return api_backend().sessions(**kwargs)
+
+
 _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
     "jcode_health": lambda _: backend().health(),
     "jcode_run": lambda a: backend().run(str(a.get("prompt", "")), **_task_kwargs(a)),
@@ -235,6 +292,9 @@ _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
     "jcode_task_output": _output,
     "jcode_task_cancel": lambda a: backend().cancel(_task_id(a)),
     "jcode_task_list": lambda a: backend().list_tasks(int(_number(a, "limit") or 20)),
+    "jcode_api_health": lambda _: api_backend().health(),
+    "jcode_api_ask": _api_ask,
+    "jcode_api_sessions": _api_sessions,
 }
 
 
