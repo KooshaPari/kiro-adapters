@@ -2,14 +2,17 @@
 #
 # Override the interpreter with:  make PY=/path/to/python3 test
 #
-# Targets: help (default), test, lint, smoke, mcp-selftest.
+# Targets: help (default), test, lint, smoke, mcp-selftest, kiro-backend-gate.
 
 PY ?= /opt/homebrew/bin/python3.12
 SRC := src
 TESTS := tests
+#: The jcode build to check against the Kiro Crew backend gate. Override with:
+#:   make kiro-backend-gate JCODE=/path/to/jcode
+JCODE ?= $(HOME)/.jcode/builds/versions/0.99.1-kcode-mode/jcode
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint smoke mcp-selftest
+.PHONY: help test lint smoke mcp-selftest kiro-backend-gate
 
 help: ## Show this help
 	@echo "kiro-adapters targets:"
@@ -18,6 +21,7 @@ help: ## Show this help
 	@echo "  lint         Byte-compile every source file under $(SRC)"
 	@echo "  smoke        Run the CLI status command and validate its JSON"
 	@echo "  mcp-selftest Print the MCP tools/list payload and validate it"
+	@echo "  kiro-backend-gate  Check a jcode build against Kiro Crew's backend gate"
 	@echo ""
 	@echo "Interpreter: $(PY)"
 
@@ -35,3 +39,6 @@ smoke: ## Run the CLI status command and validate its JSON
 mcp-selftest: ## Print the MCP tools/list payload and validate it
 	@PYTHONPATH=$(SRC) $(PY) -m kiro_adapters.mcp_server --selftest \
 		| $(PY) -c "import json,sys; d=json.load(sys.stdin); names=[t['name'] for t in d['tools']]; print('mcp-selftest ok: {0} tool(s)'.format(len(names))); print('\n'.join(names))"
+
+kiro-backend-gate: ## Check that a jcode build satisfies Kiro Crew's backend gate
+	@$(PY) scripts/acceptance/kiro_backend_gate.py $(JCODE)
