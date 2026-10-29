@@ -1,0 +1,16 @@
+{
+  "id": "session_gamma_1700000200000_cccccccccccccccccccccccccccc",
+  "parent_id": null,
+  "title": "Second session on a shared pid",
+  "created_at": "2026-10-20T00:00:00.000000Z",
+  "updated_at": "2026-10-20T00:07:00.000000Z",
+  "provider_key": "openai-compatible",
+  "model": "MiniMax-M3",
+  "working_dir": "/tmp/fixture/repo-two",
+  "short_name": "gamma",
+  "status": "Active",
+  "last_pid": 41001,
+  "last_active_at": "2026-10-20T00:07:00.000000Z",
+  "is_debug": false,
+  "saved": false
+}

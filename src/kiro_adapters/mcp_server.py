@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import __version__
 from . import result as R
+from .inventory import registry
 from .kirocode import KiroCodeAdapter
 from .kirocrew import KiroCrewAdapter
 
@@ -52,17 +53,22 @@ def _code() -> KiroCodeAdapter:
 # Property types are shared by name; "harness" is the only enum.
 _PROP_TYPES = {
     "agent": "string", "background": "boolean", "crew": "string", "cwd": "string",
-    "harness": "string", "message": "string", "model": "string", "name": "string",
-    "no_test": "boolean", "prompt": "string", "spec_path": "string",
-    "timeout_secs": "number", "ttl": "string",
+    "harness": "string", "include_stale": "boolean", "limit": "integer",
+    "message": "string", "model": "string", "name": "string",
+    "no_test": "boolean", "prompt": "string", "session_uid": "string",
+    "spec_path": "string", "timeout_secs": "number", "ttl": "string",
 }
 _ENUM_PROPS = {"harness": ["kirocrew", "kirocode"]}
 _PROP_DESCRIPTIONS = {
     "agent": "Agent name to use.", "background": "Run without waiting.",
     "crew": "Crew to dispatch into.", "cwd": "Working directory.",
-    "harness": "Harness that runs the prompt.", "message": "Message to send.",
+    "harness": "Harness that runs the prompt.",
+    "include_stale": "Include sessions whose heartbeat is missing.",
+    "limit": "Maximum number of items to return.",
+    "message": "Message to send.",
     "model": "Model override.", "name": "Run name.",
     "no_test": "Skip the test phase.", "prompt": "Prompt to send.",
+    "session_uid": "Session uid as '<source>:<native_session_id>'.",
     "spec_path": "Path to the spec file.", "timeout_secs": "Timeout in seconds.",
     "ttl": "Dashboard token TTL.",
 }
@@ -87,6 +93,17 @@ _TOOLS = [
      "prompt cwd timeout_secs", "prompt"),
     ("kiro_dispatch", "Dispatch one prompt to either Kiro Crew or the Kiro coding CLI.",
      "harness prompt agent timeout_secs", "harness prompt"),
+    # Read-only session inventory. These only read harness stores: no daemon
+    # is contacted, no harness binary is run and no session is resumed.
+    ("agent_sessions_list",
+     "List agent sessions detectable on this host (read-only; no process started).",
+     "limit include_stale", ""),
+    ("agent_session_get", "Return one detected agent session by its session uid.",
+     "session_uid", "session_uid"),
+    ("agent_session_history", "Bounded, redacted history slice for one session uid.",
+     "session_uid limit", "session_uid"),
+    ("agent_sources", "Session stores this host exposes for agent-session detection.",
+     "", ""),
 ]
 
 
@@ -127,6 +144,17 @@ def _optional_str(args: Dict[str, Any], key: str) -> Optional[str]:
     return value if isinstance(value, str) and value.strip() else None
 
 
+def _optional_int(args: Dict[str, Any], key: str) -> Optional[int]:
+    """An integer argument, or ``None`` when absent or not a real integer."""
+    value = args.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # -- tool handlers --------------------------------------------------------
 def _dispatch(args: Dict[str, Any]) -> R.AdapterResult:
     harness = str(args.get("harness", ""))
@@ -138,6 +166,90 @@ def _dispatch(args: Dict[str, Any]) -> R.AdapterResult:
         return _code().ask(prompt=prompt, **_timeout_kwargs(args))
     return R.AdapterResult.failure(
         "kiro", "dispatch", R.UNSUPPORTED, "unknown harness: {}".format(harness or "<empty>")
+    )
+
+
+def _agent_sessions_list(args: Dict[str, Any]) -> R.AdapterResult:
+    """Read-only list of the sessions detectable on this host."""
+    include_stale = args.get("include_stale")
+    if not isinstance(include_stale, bool):
+        include_stale = True
+    envelopes = registry.enumerate_sessions(
+        limit=_optional_int(args, "limit"), include_stale=include_stale
+    )
+    return R.AdapterResult.success(
+        "inventory",
+        "agent_sessions_list",
+        detail="{} session(s) detected".format(len(envelopes)),
+        data={
+            "count": len(envelopes),
+            "include_stale": include_stale,
+            "sessions": [envelope.to_dict() for envelope in envelopes],
+        },
+    )
+
+
+def _agent_session_get(args: Dict[str, Any]) -> R.AdapterResult:
+    """One session envelope, by uid."""
+    session_uid = _optional_str(args, "session_uid")
+    if session_uid is None:
+        return R.AdapterResult.failure(
+            "inventory", "agent_session_get", R.ERROR, "session_uid is required"
+        )
+    envelope = registry.find_session(session_uid)
+    if envelope is None:
+        return R.AdapterResult.failure(
+            "inventory",
+            "agent_session_get",
+            R.ERROR,
+            "no detected session matches {}".format(session_uid),
+            hints=["call agent_sessions_list to see the uids this host exposes"],
+        )
+    return R.AdapterResult.success(
+        "inventory",
+        "agent_session_get",
+        detail="session found",
+        data={"session": envelope.to_dict()},
+    )
+
+
+def _agent_session_history(args: Dict[str, Any]) -> R.AdapterResult:
+    """Bounded, redacted history slice for one uid (never a whole transcript)."""
+    session_uid = _optional_str(args, "session_uid")
+    if session_uid is None:
+        return R.AdapterResult.failure(
+            "inventory", "agent_session_history", R.ERROR, "session_uid is required"
+        )
+    limit = _optional_int(args, "limit")
+    data = registry.session_history(
+        session_uid,
+        limit=registry.DEFAULT_HISTORY_LIMIT if limit is None else limit,
+    )
+    if not data.get("ok"):
+        return R.AdapterResult.failure(
+            "inventory",
+            "agent_session_history",
+            R.ERROR,
+            str(data.get("detail") or "history is not available"),
+            data=data,
+        )
+    return R.AdapterResult.success(
+        "inventory",
+        "agent_session_history",
+        detail="{} item(s) returned".format(data.get("returned", 0)),
+        data=data,
+    )
+
+
+def _agent_sources(args: Dict[str, Any]) -> R.AdapterResult:
+    """The stores this host exposes for session detection."""
+    sources = registry.available_sources()
+    present = sum(1 for source in sources if source.get("present"))
+    return R.AdapterResult.success(
+        "inventory",
+        "agent_sources",
+        detail="{}/{} source store(s) present".format(present, len(sources)),
+        data={"count": len(sources), "sources": sources},
     )
 
 
@@ -164,6 +276,10 @@ _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
         prompt=str(a.get("prompt", "")), cwd=_optional_str(a, "cwd"), **_timeout_kwargs(a)
     ),
     "kiro_dispatch": _dispatch,
+    "agent_sessions_list": _agent_sessions_list,
+    "agent_session_get": _agent_session_get,
+    "agent_session_history": _agent_session_history,
+    "agent_sources": _agent_sources,
 }
 
 

@@ -1,0 +1,16 @@
+{
+  "id": "session_beta_1700000100000_bbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "parent_id": "session_alpha_1700000000000_aaaaaaaaaaaaaaaaaaaaaaaa",
+  "title": "Headless fixture session, same cwd",
+  "created_at": "2026-10-20T00:00:00.000000Z",
+  "updated_at": "2026-10-20T00:06:00.000000Z",
+  "provider_key": "openai-compatible",
+  "model": "MiniMax-M3",
+  "working_dir": "/tmp/fixture/repo-one",
+  "short_name": "beta",
+  "status": "Active",
+  "last_pid": 41002,
+  "last_active_at": "2026-10-20T00:06:00.000000Z",
+  "is_debug": false,
+  "saved": false
+}

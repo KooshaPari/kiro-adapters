@@ -1,0 +1,56 @@
+{
+  "id": "session_alpha_1700000000000_aaaaaaaaaaaaaaaaaaaaaaaa",
+  "parent_id": null,
+  "title": "Interactive fixture session",
+  "created_at": "2026-10-20T00:00:00.000000Z",
+  "updated_at": "2026-10-20T00:05:00.000000Z",
+  "provider_key": "openai-compatible",
+  "model": "MiniMax-M3",
+  "working_dir": "/tmp/fixture/repo-one",
+  "short_name": "alpha",
+  "status": "Active",
+  "last_pid": 41001,
+  "last_active_at": "2026-10-20T00:05:00.000000Z",
+  "is_debug": false,
+  "saved": false,
+  "messages": [
+    {
+      "id": "m1",
+      "role": "user",
+      "display_role": "user",
+      "timestamp": "2026-10-20T00:01:00Z",
+      "content": "hello there"
+    },
+    {
+      "id": "m2",
+      "role": "assistant",
+      "display_role": "assistant",
+      "timestamp": "2026-10-20T00:02:00Z",
+      "content": "hi, what can I do for you"
+    },
+    {
+      "id": "m3",
+      "role": "user",
+      "display_role": "user",
+      "timestamp": "2026-10-20T00:03:00Z",
+      "content": "please use the key sk-ABCDEFGHIJKLMNOPQRSTUV for that"
+    },
+    {
+      "id": "m4",
+      "role": "assistant",
+      "display_role": "assistant",
+      "timestamp": "2026-10-20T00:04:00Z",
+      "content": {
+        "text": "the key is sk-ABCDEFGHIJKLMNOPQRSTUV",
+        "notes": ["sk-ABCDEFGHIJKLMNOPQRSTUV", "nothing secret here"]
+      }
+    }
+  ],
+  "env_snapshots": [
+    {
+      "id": "e1",
+      "captured_at": "2026-10-20T00:00:30Z",
+      "vars": {"PATH": "/usr/bin:/bin"}
+    }
+  ]
+}

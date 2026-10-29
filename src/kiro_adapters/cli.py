@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from . import __version__
 from . import result as R
+from .inventory import registry
 from .kirocode import KiroCodeAdapter
 from .kirocrew import KiroCrewAdapter
 
@@ -89,6 +90,28 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="skip the test phase")
     spec.add_argument("--timeout", type=float, default=None, help="timeout in seconds")
 
+    # Read-only session inventory. These mirror the four agent_* MCP tools and
+    # never start a daemon, a harness binary or a probe process.
+    sessions = sub.add_parser("sessions", parents=[common],
+                              help="list agent sessions detectable on this host")
+    sessions.add_argument("--limit", type=int, default=None,
+                          help="maximum number of sessions to return")
+    sessions.add_argument("--no-stale", dest="no_stale", action="store_true",
+                          help="hide sessions whose heartbeat is missing")
+
+    get = sub.add_parser("session", parents=[common],
+                         help="show one detected session by uid")
+    get.add_argument("session_uid", help="session uid as '<source>:<native_id>'")
+
+    history = sub.add_parser("session-history", parents=[common],
+                             help="bounded, redacted history for one session uid")
+    history.add_argument("session_uid", help="session uid as '<source>:<native_id>'")
+    history.add_argument("--limit", type=int, default=registry.DEFAULT_HISTORY_LIMIT,
+                         help="maximum number of messages or events to return")
+
+    sub.add_parser("sources", parents=[common],
+                   help="session stores this host exposes")
+
     kask = sub.add_parser("kirocode-ask", parents=[common],
                           help="send one prompt to the Kiro coding CLI")
     kask.add_argument("prompt", help="prompt to send")
@@ -126,6 +149,49 @@ def _run(args: argparse.Namespace) -> R.AdapterResult:
     if command == "run-spec":
         return _crew().run_spec(spec_path=args.spec, name=args.name,
                                 no_test=bool(args.no_test), **_timeout_kw(args))
+    if command == "sessions":
+        envelopes = registry.enumerate_sessions(
+            limit=getattr(args, "limit", None),
+            include_stale=not bool(getattr(args, "no_stale", False)),
+        )
+        return R.AdapterResult.success(
+            "inventory", "sessions",
+            detail="{} session(s) detected".format(len(envelopes)),
+            data={"count": len(envelopes),
+                  "sessions": [envelope.to_dict() for envelope in envelopes]},
+        )
+    if command == "session":
+        envelope = registry.find_session(args.session_uid)
+        if envelope is None:
+            return R.AdapterResult.failure(
+                "inventory", "session", R.ERROR,
+                "no detected session matches {}".format(args.session_uid),
+            )
+        return R.AdapterResult.success(
+            "inventory", "session", detail="session found",
+            data={"session": envelope.to_dict()},
+        )
+    if command == "session-history":
+        data = registry.session_history(args.session_uid, limit=args.limit)
+        if not data.get("ok"):
+            return R.AdapterResult.failure(
+                "inventory", "session-history", R.ERROR,
+                str(data.get("detail") or "history is not available"), data=data,
+            )
+        return R.AdapterResult.success(
+            "inventory", "session-history",
+            detail="{} item(s) returned".format(data.get("returned", 0)),
+            data=data,
+        )
+    if command == "sources":
+        sources = registry.available_sources()
+        return R.AdapterResult.success(
+            "inventory", "sources",
+            detail="{}/{} source store(s) present".format(
+                sum(1 for source in sources if source.get("present")), len(sources)
+            ),
+            data={"count": len(sources), "sources": sources},
+        )
     if command == "kirocode-status":
         return _code().status()
     if command == "kirocode-ask":

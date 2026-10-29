@@ -25,6 +25,10 @@ TOOL_NAMES = [
     "kirocode_status",
     "kirocode_ask",
     "kiro_dispatch",
+    "agent_sessions_list",
+    "agent_session_get",
+    "agent_session_history",
+    "agent_sources",
 ]
 
 
