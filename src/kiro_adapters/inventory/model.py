@@ -15,178 +15,67 @@ fail a test:
    *source* says it changed) are separate fields and are never conflated.
 3. A capability is only ``supported`` when the adapter that probed it recorded
    the probe. An exit code of 0 is not a probe.
+
+The vocabulary this envelope speaks (:mod:`._model_constants`) and the
+projection-sanitising rules it obeys (:mod:`._model_sanitize`) live in their
+own modules; both are re-exported from here so that this module remains the
+single public import surface it has always been.
 """
 
 from __future__ import annotations
 
-import re
-import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
-from ..redact import redact
-
-# -- source identifiers -----------------------------------------------------
-# Namespaced by the thing that actually produced the observation. A consumer
-# can always tell a first-hand native source from a second-hand projection.
-SOURCE_JCODE_FS = "jcode-fs"
-SOURCE_KCODE_FS = "kcode-fs"
-SOURCE_CODEX_FS = "codex-fs"
-SOURCE_CODEX_APP_SERVER = "codex-app-server"
-SOURCE_KIROCREW_LEDGER = "kirocrew-ledger"
-SOURCE_HERDR_PANE = "herdr-pane"
-SOURCE_SHARECLI_PROC = "sharecli-proc"
-SOURCE_FORGE_FS = "forge-fs"
-
-# -- launch modes -----------------------------------------------------------
-LAUNCH_INTERACTIVE = "interactive"
-LAUNCH_HEADLESS = "headless"
-LAUNCH_UNKNOWN = "unknown"
-
-# -- states -----------------------------------------------------------------
-STATE_RUNNING = "running"
-STATE_IDLE = "idle"
-STATE_WORKING = "working"
-STATE_BLOCKED = "blocked"
-STATE_DONE = "done"
-STATE_STALE = "stale"
-STATE_EXITED = "exited"
-STATE_UNKNOWN = "unknown"
-
-# -- capability names -------------------------------------------------------
-CAP_DISCOVER_PROCESS = "discover_process"
-CAP_DISCOVER_SESSION = "discover_session"
-CAP_OBSERVE_SNAPSHOT = "observe_snapshot"
-CAP_OBSERVE_STREAM = "observe_stream"
-CAP_JOIN_LIVE = "join_same_live_session"
-CAP_RESUME = "resume_new_execution"
-CAP_INPUT = "input"
-CAP_INTERRUPT = "interrupt"
-CAP_PERMISSIONS = "permissions"
-CAP_TERMINAL_RESIZE = "terminal_resize"
-CAP_DETACH = "detach"
-CAP_READ_HISTORY = "read_native_history"
-CAP_ENROLL = "enroll_existing"
-
-ALL_CAPABILITIES = (
+from ._model_constants import (  # noqa: F401  (re-exported public surface)
+    ALL_CAPABILITIES,
+    CAP_DETACH,
     CAP_DISCOVER_PROCESS,
     CAP_DISCOVER_SESSION,
-    CAP_OBSERVE_SNAPSHOT,
-    CAP_OBSERVE_STREAM,
-    CAP_JOIN_LIVE,
-    CAP_RESUME,
+    CAP_ENROLL,
     CAP_INPUT,
     CAP_INTERRUPT,
+    CAP_JOIN_LIVE,
+    CAP_OBSERVE_SNAPSHOT,
+    CAP_OBSERVE_STREAM,
     CAP_PERMISSIONS,
-    CAP_TERMINAL_RESIZE,
-    CAP_DETACH,
     CAP_READ_HISTORY,
-    CAP_ENROLL,
+    CAP_RESUME,
+    CAP_TERMINAL_RESIZE,
+    LAUNCH_HEADLESS,
+    LAUNCH_INTERACTIVE,
+    LAUNCH_UNKNOWN,
+    MAX_HISTORY_LIMIT,
+    SOURCE_CODEX_APP_SERVER,
+    SOURCE_CODEX_FS,
+    SOURCE_FORGE_FS,
+    SOURCE_HERDR_PANE,
+    SOURCE_JCODE_FS,
+    SOURCE_KCODE_FS,
+    SOURCE_KIROCREW_LEDGER,
+    SOURCE_SHARECLI_PROC,
+    STATE_BLOCKED,
+    STATE_DONE,
+    STATE_EXITED,
+    STATE_IDLE,
+    STATE_RUNNING,
+    STATE_STALE,
+    STATE_UNKNOWN,
+    STATE_WORKING,
+    clamp_history_limit,
+    now_iso,
 )
-
-
-# Ceiling on ``history(limit=...)`` for every file-backed adapter. The
-# transcript slice is caller-selected, which means a caller could ask for the
-# whole transcript; one shared constant keeps jcode, kcode and the crew
-# adapter from disagreeing about what "bounded" means. It lives here rather
-# than in one adapter so the crew adapter does not have to import jcode's
-# module to share a bound.
-MAX_HISTORY_LIMIT = 200
-
-
-def clamp_history_limit(value: Any, ceiling: int = MAX_HISTORY_LIMIT) -> int:
-    """Clamp a caller-supplied history window into ``[0, ceiling]``.
-
-    A non-numeric, negative or absurd value is not an error: it is a request
-    for a window this layer will not honour, so it becomes 0 (or the ceiling)
-    rather than raising. That is what makes the bound hold even when the bound
-    is applied by three adapters and one registry.
-    """
-    try:
-        limit = int(value)
-    except (TypeError, ValueError):
-        return 0
-    if limit <= 0:
-        return 0
-    return min(limit, ceiling)
-
-
-def now_iso() -> str:
-    """RFC3339 UTC timestamp used for every ``observed_at``."""
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-# -- projection sanitising --------------------------------------------------
-# A title, a working directory and a native id are all user-derived text. The
-# envelope is a projection consumed by other applications (tool results,
-# dashboards, log lines), so raw content never travels in it: credentials are
-# redacted, control characters are removed so source data cannot forge a log
-# line or a failure detail, and each field is length-bounded.
-
-_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_SPACE_RUN = re.compile(r"[ ]{2,}")
-
-MAX_TITLE_CHARS = 200
-MAX_WORKSPACE_CHARS = 512
-MAX_NATIVE_ID_CHARS = 256
-# Environment-derived fields (host, namespace, harness version, executable
-# path) are still text that came from somewhere we do not control, so they are
-# redacted and bounded like any other user-derived string.
-MAX_ENV_FIELD_CHARS = 256
-# Machine-state fields (state, launch_mode, source_updated_at) must stay safe
-# to compare by equality, so they are only stripped of control characters and
-# length-bounded. They are never word-collapsed or redacted, which would change
-# a value a consumer compares against.
-MAX_MACHINE_STATE_CHARS = 64
-
-
-def strip_control_chars(value: str) -> str:
-    """Remove control characters, keeping printable text intact."""
-    return _CONTROL_CHARS.sub("", value)
-
-
-def sanitize_native_id(value: Optional[str]) -> str:
-    """A native id safe to place in a projection or in a failure detail.
-
-    Control characters (newlines, NUL, ESC) are removed rather than escaped:
-    such an id is not a legitimate file name, and letting one through would
-    let source data forge log lines and detail strings. Returns ``""`` when
-    nothing printable remains, which callers must treat as "no identity".
-    """
-    if not value:
-        return ""
-    cleaned = strip_control_chars(value)
-    cleaned = _SPACE_RUN.sub(" ", cleaned).strip()
-    if len(cleaned) > MAX_NATIVE_ID_CHARS:
-        cleaned = cleaned[:MAX_NATIVE_ID_CHARS]
-    return cleaned
-
-
-def sanitize_user_text(value: Optional[str], limit: int) -> Optional[str]:
-    """Redact and bound user-derived text such as a title or a directory."""
-    if value is None:
-        return None
-    cleaned = redact(strip_control_chars(value))
-    cleaned = _SPACE_RUN.sub(" ", cleaned).strip()
-    if limit > 0 and len(cleaned) > limit:
-        cleaned = cleaned[: max(0, limit - 1)].rstrip() + "\u2026"
-    return cleaned
-
-
-def sanitize_machine_value(value: Optional[str], limit: int) -> Optional[str]:
-    """Make a machine-state string safe without changing what it means.
-
-    ``state``, ``launch_mode`` and ``source_updated_at`` are compared by exact
-    equality by consumers, so they are not redacted, word-collapsed or
-    ellipsised. Control characters are still removed: a newline or ESC in a
-    machine field could forge a log line exactly as it could in a title.
-    """
-    if value is None:
-        return None
-    cleaned = strip_control_chars(value)
-    if limit > 0 and len(cleaned) > limit:
-        cleaned = cleaned[:limit]
-    return cleaned
+from ._model_sanitize import (  # noqa: F401  (re-exported public surface)
+    MAX_ENV_FIELD_CHARS,
+    MAX_MACHINE_STATE_CHARS,
+    MAX_NATIVE_ID_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_WORKSPACE_CHARS,
+    sanitize_machine_value,
+    sanitize_native_id,
+    sanitize_user_text,
+    strip_control_chars,
+)
 
 
 @dataclass(frozen=True)
@@ -419,70 +308,12 @@ def make_session_uid(source: str, native_session_id: str) -> str:
     return "{}:{}".format(source, native_session_id)
 
 
-def merge_capabilities(
-    primary: Dict[str, Capability], secondary: Dict[str, Capability]
-) -> Dict[str, Capability]:
-    """Merge two capability maps without ever inventing support.
-
-    A capability is supported in the result if *either* side proved it, and
-    unsupported otherwise. A capability neither side declared stays absent
-    from the map entirely - the envelope's :meth:`SessionEnvelope.capability`
-    turns an absent capability into an explicit unsupported-with-reason, so
-    "not declared" never reads as "declared as false".
-
-    When both sides declare the same capability and disagree, the side that
-    proved it wins. When both are unsupported, the primary's reason is kept
-    and the secondary's is appended, so the disagreement stays visible
-    instead of being smoothed over.
-    """
-    merged: Dict[str, Capability] = dict(secondary)
-    for name, cap in primary.items():
-        other = merged.get(name)
-        if other is None:
-            merged[name] = cap
-            continue
-        if cap.supported and not other.supported:
-            merged[name] = cap
-        elif cap.supported and other.supported:
-            merged[name] = cap
-        elif not cap.supported and not other.supported:
-            if other.reason and other.reason not in (cap.reason or ""):
-                merged[name] = Capability.unsupported(
-                    "{}; also: {}".format(cap.reason or "", other.reason)
-                )
-            else:
-                merged[name] = cap
-        else:
-            # The secondary proved it and the primary did not. Keep the proof.
-            merged[name] = other
-    return merged
-
-
-def envelope_sort_key(envelope: SessionEnvelope) -> tuple:
-    """Deterministic ordering so two readers see the same list order."""
-    return (
-        envelope.source_updated_at or "",
-        envelope.native_session_id,
-        envelope.source,
-    )
-
-
-def summarize(envelopes: List[SessionEnvelope]) -> Dict[str, Any]:
-    """Counts by source, launch mode and state.
-
-    A consumer dashboard wants this shape; it deliberately does not collapse
-    "process exists" into "controllable".
-    """
-    by_source: Dict[str, int] = {}
-    by_launch_mode: Dict[str, int] = {}
-    by_state: Dict[str, int] = {}
-    for env in envelopes:
-        by_source[env.source] = by_source.get(env.source, 0) + 1
-        by_launch_mode[env.launch_mode] = by_launch_mode.get(env.launch_mode, 0) + 1
-        by_state[env.state] = by_state.get(env.state, 0) + 1
-    return {
-        "total": len(envelopes),
-        "by_source": by_source,
-        "by_launch_mode": by_launch_mode,
-        "by_state": by_state,
-    }
+# Collection-level helpers live in their own module because they describe many
+# sessions rather than one, but they are part of this module's public surface:
+# the import is placed after the definitions above so the aggregate module can
+# import the envelope types without a circular import.
+from ._model_aggregate import (  # noqa: E402,F401  (re-exported public surface)
+    envelope_sort_key,
+    merge_capabilities,
+    summarize,
+)
