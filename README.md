@@ -134,11 +134,17 @@ kiro-adapter-mcp --selftest
 
 That prints the `tools/list` payload as JSON and exits.
 
-The server exposes ten tools: `kirocrew_status`, `kirocrew_agents`,
+The server exposes fourteen tools: `kirocrew_status`, `kirocrew_agents`,
 `kirocrew_ask`, `kirocrew_spawn`, `kirocrew_spawn_list`,
 `kirocrew_run_spec`, `kirocrew_dashboard_url`, `kirocode_status`,
 `kirocode_ask`, and `kiro_dispatch`, which routes one prompt to either
-harness. Parameter names and result codes are in `docs/ADAPTER-CONTRACT.md`.
+harness. Alongside those ten are four read-only inventory tools:
+`agent_sessions_list` and `agent_session_get` to enumerate and inspect
+the agent sessions discovered on this host, `agent_session_history` for
+one session's recorded transcript, and `agent_sources` to list which
+harness data directories the inventory reads. The inventory tools never
+start, resume, or close a session. Parameter names and result codes are
+in `docs/ADAPTER-CONTRACT.md`.
 
 ## The jcode harness-API bridge
 
