@@ -56,7 +56,10 @@ and a protocol violation or invalid argument is `ERROR`.
 
 ## 2. Tool surface
 
-Ten tools.
+Fourteen tools: the ten harness tools and, since the agent-session inventory landing, four
+read-only inventory tools. The inventory tools never launch a harness, never spend a model
+call, and never write to a session store. They read the session artifacts each harness already
+leaves on disk and return them in the same envelope.
 
 | Tool | Required | Optional | Adapter action | Cost |
 |---|---|---|---|---|
@@ -70,6 +73,10 @@ Ten tools.
 | `kirocode_status` | none | none | `KiroCodeAdapter.status` | one `--help` probe |
 | `kirocode_ask` | `prompt` | `cwd`, `timeout_secs` | `KiroCodeAdapter.ask` | one model call |
 | `kiro_dispatch` | `harness`, `prompt` | `agent`, `timeout_secs` | routes to `ask` on the chosen harness | one model call |
+| `agent_sessions_list` | none | `limit`, `include_stale` | inventory enumeration over the host's session stores | none, read-only |
+| `agent_session_get` | `session_uid` | none | inventory lookup of one session envelope | none, read-only |
+| `agent_session_history` | `session_uid` | `limit` | inventory bounded history slice | none, read-only |
+| `agent_sources` | none | none | inventory store enumeration | none, read-only |
 
 Parameter semantics:
 
@@ -81,6 +88,34 @@ Parameter semantics:
   and test verification step after each step of the spec run.
 - `ttl` on `kirocrew_dashboard_url` maps to `--ttl`. The CLI default is 20h.
 - `harness` on `kiro_dispatch` is exactly `"kirocrew"` or `"kirocode"`.
+- `include_stale` on `agent_sessions_list` defaults to `true`. Set it to `false` to drop
+  sessions whose process is no longer live. The stale flag is derived from the store's own
+  metadata, so it is a hint, not proof, that a session is resumable.
+- `session_uid` on `agent_session_get` and `agent_session_history` is the uid returned by
+  `agent_sessions_list`. An unknown uid is `ERROR` with a hint to list the available uids; it is
+  never `NOT_INSTALLED`, because the inventory layer needs no external binary.
+- `limit` bounds the number of sessions returned by `agent_sessions_list` and the number of
+  history items returned by `agent_session_history`. `agent_session_history` never returns a
+  whole transcript: it applies the registry's default history limit when `limit` is omitted.
+- `agent_sources` takes no parameters. It reports one entry per session store the host exposes,
+  each with a `present` flag, so a caller can distinguish "this host has no Codex sessions" from
+  "this host cannot detect Codex sessions at all".
+
+### Read-only guarantees for the inventory tools
+
+The four inventory tools carry three guarantees a caller may rely on.
+
+1. **No child process.** `agent_sessions_list`, `agent_session_get`, `agent_session_history` and
+   `agent_sources` are direct file reads. They never resolve a harness binary, never probe
+   `--help`, and never start a daemon or a model process.
+2. **Bounded output.** History is a slice, not a transcript, and it is capped by `limit` or the
+   registry default. A caller asking for a large `limit` still gets redacted text.
+3. **Same envelope, no new codes.** `harness` is `inventory`. These tools produce `OK` or
+   `ERROR` only. They cannot produce `NOT_INSTALLED`, `BLOCKED`, `TIMEOUT` or `UNSUPPORTED`,
+   because there is no external binary and no readiness gate to fail.
+
+Read-only means the inventory surface never writes: it does not start, adopt, resume, cancel or
+close a session. Acting on a session is deliberately out of scope for this contract.
 
 ### jcode bridge tools, a separate server
 
@@ -109,6 +144,9 @@ the default.
 | `kirocrew_spawn` | 1800 |
 | `kirocrew_run_spec` | 3600 |
 | `kirocode_ask` | 900 |
+
+The four inventory tools have no timeout entry. They do not start a child process, so there is
+no process to cap; a slow filesystem is the only cost and it is bounded by the store read.
 
 ---
 
@@ -214,7 +252,7 @@ All modules below live in `src/kiro_adapters/`.
 
 | Surface | Module | Notes |
 |---|---|---|
-| MCP server | `mcp_server.py` | JSON-RPC 2.0 over stdio, protocol `2024-11-05`, name `kiro-adapters`. Advertises the ten tools in section 2. A `tools/call` returns the envelope as tool text, with `isError` set when `ok` is false. |
+| MCP server | `mcp_server.py` | JSON-RPC 2.0 over stdio, protocol `2024-11-05`, name `kiro-adapters`. Advertises the fourteen tools in section 2, including the four read-only inventory tools. A `tools/call` returns the envelope as tool text, with `isError` set when `ok` is false. |
 | CLI | `cli.py` | `kiro-adapter` subcommands mirror the same actions and return the same envelope. `--json` prints the envelope, exit code is 0 when `ok` and 1 when not. |
 | kirocrew adapter | `kirocrew.py` | Implements the kirocrew side. |
 | kirocode adapter | `kirocode.py` | Implements the kirocode side. |
