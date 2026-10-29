@@ -268,6 +268,18 @@ only piece of glue:
 CODEX_ACP_BIN=~/bin/jcode-acp-shim kirocrew run TASK.md
 ```
 
+The override is exported from `~/.zshrc`, so a Kiro Crew session started from
+a login shell picks it up without any per-command configuration. It points at
+a **versioned** jcode build (`~/.jcode/builds/versions/0.99.1-kcode-mode/jcode`)
+rather than a build tree, so a rebuild or a `cargo clean` cannot leave the
+shim pointing at nothing.
+
+One gap worth knowing: `kirocrew service install` bakes a fixed set of
+variables into the launchd plist, and `CODEX_ACP_BIN` is **not** among them
+(`service/common.py::service_environment`). A session started by the
+installed service therefore does not get the override; a session started from
+a shell does.
+
 Consequences, stated without hedging:
 
 - **jcode can serve as Kiro Crew's ACP backend.** The agent Kiro Crew spawns is

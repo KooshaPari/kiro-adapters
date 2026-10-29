@@ -204,6 +204,11 @@ CODEX_ACP_BIN=~/bin/jcode-acp-shim kirocrew run TASK.md
 and reports `agentInfo.name` as `jcode`; the `codex` in the logs is the slot
 Kiro Crew was told to use, not the agent's identity.
 
+The override is exported from `~/.zshrc` and points at a **versioned** jcode
+build (`~/.jcode/builds/versions/0.99.1-kcode-mode/jcode`), so a Kiro session
+started from a login shell uses jcode with no per-command configuration, and a
+rebuild cannot leave the shim pointing at nothing.
+
 The boundary worth stating: `read-only` is the only mode, so a Kiro session
 running on jcode through this slot **cannot write**. Every write-capable tool
 is disabled in the session's tool set, so it is not offered to the model at
