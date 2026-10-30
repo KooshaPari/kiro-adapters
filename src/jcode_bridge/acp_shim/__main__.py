@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import List, Optional
+import sys
+from typing import List, Optional, Tuple
 
 from .capabilities import MODE_READ_ONLY
 from .runtime import run, stdio_upstream_factory
@@ -33,10 +34,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--upstream",
-        nargs="+",
-        default=["kcode", "acp"],
+        default=None,
         metavar="ARGV",
-        help="ACP front end argv (default: kcode acp). Not a daemon.",
+        help=(
+            "ACP front end argv (default: kcode acp). Not a daemon. "
+            "Everything after --upstream is passed to the child verbatim, so "
+            "flags like --no-selfdev work. Put the shim's own flags BEFORE "
+            "--upstream."
+        ),
     )
     parser.add_argument(
         "--session-dir",
@@ -70,10 +75,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def split_upstream(argv: Optional[List[str]]) -> Tuple[List[str], List[str]]:
+    """Split ``argv`` into (shim flags, upstream argv).
+
+    Everything after the first ``--upstream`` belongs to the child process,
+    verbatim. Doing the split here rather than with argparse's ``REMAINDER``
+    keeps it identical on every supported Python: argparse's handling of a
+    literal ``--`` changed between 3.9 and 3.12, and a flag-like child
+    argument (``--no-selfdev``) must never be parsed as the shim's own flag.
+    """
+    if not argv:
+        return [], ["kcode", "acp"]
+    if "--upstream" not in argv:
+        return list(argv), ["kcode", "acp"]
+    cut = argv.index("--upstream")
+    head = list(argv[:cut])
+    tail = list(argv[cut + 1:])
+    if tail and tail[0] == "--":
+        tail = tail[1:]
+    return head, tail
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    head, upstream_argv = split_upstream(argv)
+    args = build_parser().parse_args(head)
+    upstream = tuple(args.upstream) if args.upstream else tuple(upstream_argv)
+    if not upstream:
+        print("jcode-acp-adopt: --upstream needs an argv", file=sys.stderr)
+        return 2
     config = ShimConfig(
-        upstream_argv=tuple(args.upstream),
+        upstream_argv=upstream,
         session_dirs=_split(args.session_dir),
         socket_paths=_split(args.socket),
         mode=args.mode,

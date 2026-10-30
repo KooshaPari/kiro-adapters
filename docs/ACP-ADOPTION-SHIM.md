@@ -68,7 +68,7 @@ jcode-acp-adopt --upstream kcode acp \
 
 | Flag | Meaning |
 |---|---|
-| `--upstream ARGV...` | ACP front end argv. Default `kcode acp`. This is the only child process the shim can create. |
+| `--upstream ARGV...` | ACP front end argv. Default `kcode acp`. This is the only child process the shim can create. Everything after `--upstream` goes to the child verbatim, so `--upstream kcode --no-selfdev acp` works. Put the shim's own flags **before** `--upstream`. |
 | `--session-dir DIR` | Session store to search. Repeatable. |
 | `--socket PATH` | Daemon socket to probe. Repeatable. Never created. `JCODE_ACP_SOCKET` overrides the list. |
 | `--mode MODE` | Only `read-only` is accepted. |
@@ -77,6 +77,18 @@ jcode-acp-adopt --upstream kcode acp \
 
 The shim also exports `JCODE_ACP_SHIM=1` into its own environment so a
 downstream process can tell it is running under the shim.
+
+### Why the argv is split by hand
+
+`--upstream` is split out of `argv` before argparse sees it. argparse's
+`REMAINDER` is not used, because its handling of a literal `--` differs
+between Python 3.9 and 3.12, and because a flag-like child argument must
+never be parsed as the shim's own flag. With the split done first,
+`--upstream kcode --no-selfdev acp` reaches the child unchanged on every
+supported Python.
+
+This was found by live probing, not by the unit suite: the in-process double
+never goes through the command line.
 
 ## Errors
 

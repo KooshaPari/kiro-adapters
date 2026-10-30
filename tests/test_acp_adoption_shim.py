@@ -299,5 +299,52 @@ class TestStreamAndListing(ShimCase):
         self.assertTrue(upstream.closed)
 
 
+class UpstreamArgvTests(unittest.TestCase):
+    """The upstream argv must survive flag-like arguments.
+
+    ``--upstream kcode --no-selfdev acp`` is how a real build is invoked:
+    ``--no-selfdev`` stops the ACP front end from reloading the binary
+    underneath the running session. With ``nargs="+"`` argparse tried to parse
+    ``--no-selfdev`` as the shim's own flag and the process died with
+    "unrecognized arguments" before it spoke a single ACP frame.
+    """
+
+    def _split(self, argv: List[str]):
+        from jcode_bridge.acp_shim.__main__ import split_upstream
+
+        return split_upstream(argv)
+
+    def test_flag_like_arguments_reach_the_upstream_verbatim(self) -> None:
+        _, upstream = self._split(["--upstream", "kcode", "--no-selfdev", "acp"])
+        self.assertEqual(upstream, ["kcode", "--no-selfdev", "acp"])
+
+    def test_the_shim_own_flags_still_parse_before_the_upstream(self) -> None:
+        from jcode_bridge.acp_shim.__main__ import build_parser
+
+        head, _ = self._split(
+            ["--session-dir", "/tmp/x", "--timeout", "12",
+             "--upstream", "kcode", "--no-selfdev", "acp"]
+        )
+        args = build_parser().parse_args(head)
+        self.assertEqual(args.session_dir, ["/tmp/x"])
+        self.assertEqual(args.timeout, 12.0)
+
+    def test_an_explicit_separator_is_dropped(self) -> None:
+        _, upstream = self._split(["--upstream", "--", "kcode", "acp"])
+        self.assertEqual(upstream, ["kcode", "acp"])
+
+    def test_the_default_upstream_is_used_when_none_is_given(self) -> None:
+        _, upstream = self._split([])
+        self.assertEqual(upstream, ["kcode", "acp"])
+
+    def test_a_child_flag_never_becomes_a_shim_flag(self) -> None:
+        # The child flag must not appear in the shim's own parsed namespace.
+        from jcode_bridge.acp_shim.__main__ import build_parser
+
+        head, _ = self._split(["--upstream", "kcode", "--no-selfdev", "acp"])
+        args = build_parser().parse_args(head)
+        self.assertFalse(hasattr(args, "no_selfdev"))
+
+
 if __name__ == "__main__":
     unittest.main()
