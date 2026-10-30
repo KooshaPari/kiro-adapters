@@ -148,8 +148,22 @@ def main(argv):
             return _fail("create_session", "no session_id in reply", repr(frame))
         print("SESSION_CREATED id={}".format(session_id))
 
-    # 4. send_message (notify) + collect until turn_done
-    send({"v": 1, "id": 4, "req": "send_message", "session_id": session_id,
+    # 4. optionally select a model. The default model may be served by a
+    #    provider that is out of credit, which is an account problem, not a
+    #    protocol problem. Setting the model lets the operator point the turn
+    #    at a route that actually serves.
+    if model:
+        send({"v": 1, "id": 4, "req": "set_model", "session_id": session_id,
+              "model": model})
+        frame = read_one(CONNECT_TIMEOUT)
+        if not isinstance(frame, dict) or frame.get("ev") == "error":
+            proc.kill()
+            return _fail("set_model", "model not accepted: {}".format(model),
+                         repr(frame))
+        print("MODEL_SET {}".format(model))
+
+    # 5. send_message (notify) + collect until turn_done
+    send({"v": 1, "id": 5, "req": "send_message", "session_id": session_id,
           "content": prompt})
     # send_message is a notify: no reply frame. Read streaming events.
     text_parts = []
