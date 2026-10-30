@@ -217,6 +217,32 @@ all.
 This is separate from the bridge above. The bridge is jcode calling *into*
 Kiro Crew; this is Kiro Crew running *on* jcode.
 
+### The ACP adoption shim
+
+`jcode_bridge.acp_shim` is a third thing, and it is deliberately the smallest
+of the three. It lets an ACP client attach to a jcode/KCode session the
+operator is **already running**.
+
+It adopts; it does not launch. `session/load` upstream calls `ensure_daemon`,
+which *spawns* a daemon when none is running, so the shim gates the load on two
+read-only probes: the session file must exist, and a daemon socket must
+already accept a connect. Either probe failing means
+`SHIM_PRECONDITION_FAILED`, and the shim never starts a daemon.
+
+It also never sends `session/close` (upstream, that cancels a running prompt
+and stops the event pump — it is not a detach) and never sends `session/new`.
+`sessionCapabilities.close` is dropped from the advertised capabilities, so the
+shim does not advertise what it will not do.
+
+```bash
+jcode-acp-adopt --upstream kcode acp \
+    --session-dir ~/.kcode/sessions \
+    --socket ~/.kcode/scratch/kcode.sock
+```
+
+The full contract, the gate, the error codes and the scrubber are in
+[docs/ACP-ADOPTION-SHIM.md](docs/ACP-ADOPTION-SHIM.md).
+
 ## Verification status
 
 Be precise about what has and has not been exercised.

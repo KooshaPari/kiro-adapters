@@ -26,6 +26,7 @@ kiro-adapter = "kiro_adapters.cli:main"
 kiro-adapter-mcp = "kiro_adapters.mcp_server:main"
 jcode-bridge = "jcode_bridge.cli:main"
 jcode-bridge-mcp = "jcode_bridge.mcp_server:main"
+jcode-acp-adopt = "jcode_bridge.acp_shim.__main__:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
