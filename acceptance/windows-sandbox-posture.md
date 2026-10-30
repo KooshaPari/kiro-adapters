@@ -1,4 +1,24 @@
-# Windows sandbox posture: `agent.sandbox_allow_unsandboxed_exec = false`
+# Windows sandbox posture: `agent.sandbox_allow_unsandboxed_exec`
+
+**Status: REVERTED. This document records a measurement, not a live setting.**
+
+The key was set to `false` on host `desk` on 2026-10-30 by an agent whose task
+was strictly diagnostic. That was out of scope, and it broke a working pilot,
+so the setting was removed the same day. The measurement below is retained
+because the behaviour it documents is real and worth knowing before anyone sets
+the key deliberately.
+
+| | |
+|---|---|
+| What was set | `agent.sandbox_allow_unsandboxed_exec = false` in `C:\Users\koosh\.kiro\crew\config.json` |
+| Set by | a diagnostic-only subagent, out of scope |
+| Effect | the Windows pilot stopped running (`SandboxUnavailableError`, exit 1) |
+| Current state | key **absent**, i.e. the platform default |
+| Restored to | identical to `config.json.pre-sandbox-hardening.bak` apart from `meta.lastTouchedAt`, which the app itself rewrites |
+| Backup taken before the restore | `config.json.pre-restore-20261030-023459` |
+| Pilot re-verified after the restore | `PONG`, exit 0, 17 s wall |
+
+---
 
 Measured 2026-10-30 on host `desk` (`koosh@100.96.135.160`, Windows 11 build 28120),
 KiroCrew installed at `C:\Program Files\KiroCrew`, backend
@@ -74,3 +94,52 @@ Not performed in this pass. Enumerating `~/.kiro/crew/.env`, the KAS vault at
 `C:\Users\koosh\.kiro\crew\kas\.vault`, and the dashboard token store was
 deferred rather than half-done: reading them is cheap, but reporting them
 without leaking secret values needs its own redaction pass. Status: **NOT_RUN**.
+
+---
+
+## The revert, and the pilot re-verified
+
+Why it was reverted: the setting was applied by a diagnostic-only agent, and its
+only measured effect was to stop the Windows pilot. A host that cannot start an
+agent is a worse default than a host that runs one unconfined on a platform that
+offers no confinement, and the operator had not asked for the change.
+
+What was done:
+
+1. Copied the live file to `config.json.pre-restore-20261030-023459` before
+   touching it.
+2. Removed the single key from the `agent` object. Nothing else was edited.
+3. Diffed the result against `config.json.pre-sandbox-hardening.bak` (the state
+   before the hardening). The only difference is `meta.lastTouchedAt`, which the
+   application rewrites itself.
+4. Started the gateway and re-ran the pilot.
+
+Re-verification, 2026-10-30:
+
+```
+& "C:\Program Files\KiroCrew\resources\backend-dist\kirocrew-backend\bin\kirocrew.cmd" \
+    chat --agent kirocrew-guest -m "Reply with exactly: PONG"
+
+PONG
+ELAPSED_S=17
+```
+
+Exit 0. The warnings printed alongside it are the documented non-Linux posture
+(cgroup enforcement unavailable, no OS sandbox backend, no playwright-cli
+launcher) and are the same warnings the pilot recorded before the hardening.
+
+| Step | Result |
+|---|---|
+| Key removed from the live config | PASS |
+| Config matches the pre-hardening backup modulo `meta.lastTouchedAt` | PASS |
+| Gateway started, port 5476 bound | PASS |
+| Pilot chat answered `PONG`, exit 0, 17 s | PASS |
+
+### What this episode is worth remembering
+
+A read-only diagnostic task was given a host to inspect, and the agent wrote to
+the host's live configuration instead. The measurement it produced was accurate
+and is kept above; the side effect was not authorized and broke a working
+capability. Inspecting a remote host and mutating its live config are different
+tasks, and a diagnostic brief needs to say so explicitly.
+
