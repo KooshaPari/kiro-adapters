@@ -1,0 +1,133 @@
+{
+  "schema": "work-dag/v1",
+  "title": "KiroCrew / jcode adoption close-out",
+  "repo": "KooshaPari/kiro-adapters",
+  "branch": "main",
+  "status": "ACTIVE",
+  "resume_protocol": [
+    "read docs/WORK-DAG.md",
+    "git log --oneline -15",
+    "read state/work_dag.json",
+    "resume the first node whose status is not DONE"
+  ],
+  "blind_closure": {
+    "max_loss_on_kill": "one in-flight node",
+    "rules": [
+      "every node output is a committed file, not a chat message",
+      "no uncommitted state crosses a node boundary",
+      "status and evidence are committed together",
+      "DONE requires an evidence path and a verified commit hash",
+      "re-running a DONE node is a no-op that re-reads evidence",
+      "git log alone is sufficient to observe progress"
+    ]
+  },
+  "pert_unit": "10-minute blocks",
+  "critical_path": ["P0", "P4", "P5", "P6", "P9", "P10"],
+  "critical_path_expectation_blocks": 12.2,
+  "nodes": [
+    {
+      "id": "P0",
+      "title": "Persistence spine: DAG doc + state file, committed and pushed",
+      "depends_on": [],
+      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "status": "DONE",
+      "evidence": ["docs/WORK-DAG.md", "state/work_dag.json"],
+      "notes": "self-referential node; its own commit hash is recorded in the follow-up commit"
+    },
+    {
+      "id": "P1",
+      "title": "Shim binary forensics: does the shipped KCode build carry 71f7c0c44's wider denial set?",
+      "depends_on": ["P0"],
+      "o": 1, "m": 2, "p": 4, "pert": 2.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "bounded forensics; informs the writeup, does not gate the wiring"
+    },
+    {
+      "id": "P2",
+      "title": "OPERATOR GATE: choose agent.sandbox_allow_unsandboxed_exec true or false on desk",
+      "depends_on": ["P0"],
+      "o": 0, "m": 0, "p": 0, "pert": 0,
+      "status": "BLOCKED_OPERATOR",
+      "evidence": ["acceptance/windows-sandbox-posture.md"],
+      "notes": "false = Windows harness cannot start an agent; true = works unconfined. Deliberately off the critical path."
+    },
+    {
+      "id": "P3",
+      "title": "Apply the P2 value on desk; re-verify with a real chat -m invocation",
+      "depends_on": ["P2"],
+      "o": 1, "m": 2, "p": 3, "pert": 2.0,
+      "status": "BLOCKED_OPERATOR",
+      "evidence": [],
+      "notes": "must be verified by a real chat, never by reading config back"
+    },
+    {
+      "id": "P4",
+      "title": "Write ~/.kiro/crew/.env with CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim",
+      "depends_on": ["P0"],
+      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "~/.kiro/crew/.env is currently ABSENT, so read-only KCode mode is not active. Process env outranks .env; load_credentials(propagate=True) forwards unknown keys via os.environ.setdefault."
+    },
+    {
+      "id": "P5",
+      "title": "Full gateway stop/start (.env edits are only read at boot)",
+      "depends_on": ["P4"],
+      "o": 1, "m": 2, "p": 4, "pert": 2.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "launchd service dev.kirocrew.gateway"
+    },
+    {
+      "id": "P6",
+      "title": "Verify read-only mode is actually active, by real chat",
+      "depends_on": ["P5"],
+      "o": 1, "m": 3, "p": 6, "pert": 3.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "config inspection is not verification"
+    },
+    {
+      "id": "P7",
+      "title": "Dispose of the stale docs-5 branch release-lifecycle-v2-scope-candidate-20260929",
+      "depends_on": ["P0"],
+      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "stale since 2026-09-29 in ~/CodeProjects/docs/docs-5. Push, PR, merge, or delete. Never git branch -D."
+    },
+    {
+      "id": "P8",
+      "title": "Record the real log/disk trend (gateway.err, diag/ ~3.4 MB/day, 53 GiB free)",
+      "depends_on": ["P0"],
+      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "the earlier 150 MB log and 7-min bind premises were measured and refuted"
+    },
+    {
+      "id": "P9",
+      "title": "Integration verify: full test suite + one live end-to-end chat",
+      "depends_on": ["P1", "P3", "P6", "P7", "P8"],
+      "o": 2, "m": 3, "p": 5, "pert": 3.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "P3 may remain BLOCKED_OPERATOR; record that rather than faking DONE"
+    },
+    {
+      "id": "P10",
+      "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
+      "depends_on": ["P9"],
+      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "status": "NOT_RUN",
+      "evidence": [],
+      "notes": "no temporal-suffixed docs; update in place"
+    }
+  ],
+  "carried_unknowns": [
+    "whether the installed Windows KCode build advertises interactionController (source says cfg!(unix); installed binary not probed)",
+    "harness/_common.py and Electron app.asar are unread",
+    "Windows GUI gateway respawn after a CLI stop is not proven linked"
+  ]
+}
