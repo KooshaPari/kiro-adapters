@@ -207,6 +207,49 @@ Re-run the health probe before trusting any of the above on a different host:
 PYTHONPATH=src python3 -m jcode_bridge.cli --json api-health
 ```
 
+### The reproducible probe
+
+`scripts/acceptance/daemon_api_probe.py` drives the whole protocol end to end
+against any jcode build you point it at: `hello`, `ping`, `create_session`, an
+optional `set_model`, one turn, and `detach_session`. It exits 0 only when the
+turn completed (`turn_done` observed) with a non-empty answer.
+
+```bash
+make daemon-api-probe JCODE=/path/to/jcode
+```
+
+The provider and model come from the environment, because the operator's
+configured default may be out of credit, which is an account problem and not a
+protocol problem:
+
+```bash
+JCODE_PROBE_PROVIDER=openai-compatible \
+JCODE_PROBE_MODEL=beam-free \
+make daemon-api-probe JCODE=/path/to/jcode
+```
+
+Measured 2026-10-30 against `/Users/kooshapari/.local/bin/jcode` with
+`openai-compatible` / `beam-free`:
+
+```
+HELLO_OK server=jcode-harness-api-bridge/0.1.0 version=1 caps=20
+PING_OK
+SESSION_CREATED id=session_cow_... (via session_status)
+MODEL_SET beam-free
+TURN accepted=True done=True events=26 text_chars=15 tools=0 tokens=1
+ANSWER: DAEMON_PROBE_OK
+```
+
+Two protocol details the probe depends on:
+
+- `send_message` is a **notify**. The daemon does not reply to it. It
+  acknowledges with a `message_accepted` event, and waiting for a reply to
+  `send_message` blocks until the turn times out.
+- The turn's answer arrives as `text_delta` events followed by `text_done` and
+  `turn_done`. A model that answers only in the reasoning channel produces
+  `reasoning_delta`s and no `text_delta`, which is a model problem, not a
+  protocol one.
+
 ### How a Kiro Crew agent reaches jcode
 
 MCP entries *are* the arbitrary-command slot. `agent.acp_backend` is the wrong

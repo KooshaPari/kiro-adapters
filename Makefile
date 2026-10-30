@@ -2,7 +2,8 @@
 #
 # Override the interpreter with:  make PY=/path/to/python3 test
 #
-# Targets: help (default), test, lint, smoke, mcp-selftest, kiro-backend-gate.
+# Targets: help (default), test, lint, smoke, mcp-selftest, kiro-backend-gate,
+# daemon-api-probe.
 
 PY ?= /opt/homebrew/bin/python3.12
 SRC := src
@@ -12,7 +13,7 @@ TESTS := tests
 JCODE ?= $(HOME)/.jcode/builds/versions/0.99.1-kcode-mode/jcode
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint smoke mcp-selftest kiro-backend-gate
+.PHONY: help test lint smoke mcp-selftest kiro-backend-gate daemon-api-probe
 
 help: ## Show this help
 	@echo "kiro-adapters targets:"
@@ -22,6 +23,7 @@ help: ## Show this help
 	@echo "  smoke        Run the CLI status command and validate its JSON"
 	@echo "  mcp-selftest Print the MCP tools/list payload and validate it"
 	@echo "  kiro-backend-gate  Check a jcode build against Kiro Crew's backend gate"
+	@echo "  daemon-api-probe  Drive one turn over the jcode daemon harness API"
 	@echo ""
 	@echo "Interpreter: $(PY)"
 
@@ -42,3 +44,10 @@ mcp-selftest: ## Print the MCP tools/list payload and validate it
 
 kiro-backend-gate: ## Check that a jcode build satisfies Kiro Crew's backend gate
 	@$(PY) scripts/acceptance/kiro_backend_gate.py $(JCODE)
+
+#: The jcode build to drive the daemon harness API against. Override with:
+#:   make daemon-api-probe JCODE=/path/to/jcode
+#: The provider and model are optional; without them the probe uses whatever
+#: the operator's config names, which may be out of credit.
+daemon-api-probe: ## Drive one turn over the jcode daemon harness API
+	@$(PY) scripts/acceptance/daemon_api_probe.py $(JCODE)

@@ -13,8 +13,18 @@ Defaults:
     JCODE_BINARY  ~/.local/bin/jcode
     PROMPT        "Reply with exactly: DAEMON_PROBE_OK"
 
+Environment:
+    JCODE_PROBE_PROVIDER  provider for the spawned session (jcode's `-p` flag)
+    JCODE_PROBE_MODEL     model for the turn (jcode's `-m` flag, applied with
+                          the protocol's `set_model` request)
+
+Both are optional, but the default model is whatever the operator's config
+names, and that route may be out of credit or unavailable. Setting the provider
+and the model points the turn at a route that actually serves, which is what
+turns "the account is out of credit" into a passing probe.
+
 Exit codes:
-    0  turn completed (turn_done observed)
+    0  turn completed (turn_done observed) with a non-empty answer
     1  protocol, spawn, or turn failure (details on stderr/stdout)
     2  bad arguments
 
@@ -207,6 +217,7 @@ def main(argv):
     answer = "".join(text_parts)
     print("TURN accepted={} done={} events={} text_chars={} tools={} tokens={}".format(
         accepted, done, len(events), len(answer), len(tool_calls), len(token_usage)))
+    print("EVENT_NAMES {}".format(",".join(events)))
     print("ANSWER: {}".format(answer))
 
     # 5. detach (best effort)
