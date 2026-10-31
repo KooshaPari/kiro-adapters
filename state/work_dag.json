@@ -65,20 +65,6 @@
       "notes": "PRESENT. jcode-acp-native branch fix/acp-session-list-window, verified HEAD e373d80ed. Commit 71f7c0c44 is reachable from no ref in that tree, so it was matched by its introduction literals rather than by ancestry."
     },
     {
-      "id": "P10",
-      "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
-      "depends_on": [
-        "P9"
-      ],
-      "o": 1,
-      "m": 1,
-      "p": 2,
-      "pert": 1.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "no temporal-suffixed docs; update in place"
-    },
-    {
       "id": "P2",
       "title": "OPERATOR GATE: choose agent.sandbox_allow_unsandboxed_exec true or false on desk",
       "depends_on": [
@@ -202,9 +188,27 @@
       "m": 3,
       "p": 5,
       "pert": 3.2,
+      "status": "DONE",
+      "evidence": [
+        "docs/ACP-ADOPTION-SHIM.md",
+        "acceptance/read-only-mode-verification.md",
+        "acceptance/observability-baseline.md"
+      ],
+      "notes": "355 tests passed (24.03s) and a live Kiro Crew chat on the default backend returned RESTORED with exit 0. P6 remains UNKNOWN and is NOT folded into this PASS: the live codex-backend turn is a separate, unattributed failure."
+    },
+    {
+      "id": "P10",
+      "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
+      "depends_on": [
+        "P9"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
       "status": "NOT_RUN",
       "evidence": [],
-      "notes": "P3 may remain BLOCKED_OPERATOR; record that rather than faking DONE"
+      "notes": "no temporal-suffixed docs; update in place"
     }
   ],
   "carried_unknowns": [

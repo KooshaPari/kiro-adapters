@@ -7,6 +7,30 @@ operator is already running.
 It is an **adopter**, not a launcher. The distinction is the whole point of
 this module.
 
+## Deployment status (measured 2026-10-30/31)
+
+The shim is **built and tested but not yet reached by a live Kiro Crew turn**.
+The distinction matters, so it is stated before the design:
+
+| Layer | State | Evidence |
+|---|---|---|
+| Unit suite | **PASS** — 355 tests in the repo, 22 in `tests/test_acp_adoption_shim.py` | `acceptance/read-only-mode-verification.md` |
+| Shipped KCode build carries the widened read-only denial set | **PRESENT** | `acceptance/shim-binary-forensics.md` |
+| `CODEX_ACP_BIN` override honoured by the resolver | **PROVEN** — returns `['/Users/kooshapari/bin/jcode-acp-shim']` once `.env` is loaded | `acceptance/read-only-mode-verification.md` |
+| Live `acp_backend=codex` turn spawns the shim | **NOT PROVEN** — it spawned the genuine `~/.bun/bin/codex-acp` | `acceptance/read-only-mode-verification.md` |
+| Live turn with `acp_backend=codex` | **FAILED** — `initialize` timed out after 90 s | same, and the timeout is **unattributed**: host load was 91-144 at the time |
+| Kiro Crew chat on the default backend | **PASS** — `RESTORED`, exit 0 | same |
+
+`~/.kiro/crew/.env` now exists (mode 0600) with
+`CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim`, and the gateway's own
+stderr confirms it parses and propagates the key. It is **inert** while
+`agent.acp_backend` is absent, and was deliberately left in place: it is the
+only working half of the wiring.
+
+Do not read this table as "read-only mode is active". It is not. See
+`acceptance/codex-spawn-path-trace.md` for the open question of which spawn
+path bypasses the override.
+
 ## What it does
 
 ```mermaid
