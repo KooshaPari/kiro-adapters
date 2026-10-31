@@ -35,12 +35,12 @@ Corollary: a node that cannot be made durable should be split until it can.
 |---|---|---|---|---|---|
 | P0 | Persistence spine: this DAG + `state/work_dag.json`, committed and pushed | - | 1/1/2 | 1.2 | DONE |
 | P1 | Shim binary forensics: does the shipped KCode build carry `71f7c0c44`'s wider denial set? | P0 | 1/2/4 | 2.2 | NOT_RUN |
-| P2 | **Operator gate**: pick `agent.sandbox_allow_unsandboxed_exec` = `true` or `false` on `desk` | P0 | 0/0/0 | 0 (human) | BLOCKED_OPERATOR |
-| P3 | Apply the P2 value on `desk`; re-verify with a real `chat -m` invocation | P2 | 1/2/3 | 2.0 | BLOCKED_OPERATOR |
-| P4 | Write `~/.kiro/crew/.env` with `CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim` | P0 | 1/1/2 | 1.2 | NOT_RUN |
-| P5 | Full gateway stop/start (`.env` edits are only read at boot) | P4 | 1/2/4 | 2.2 | NOT_RUN |
-| P6 | Verify read-only mode is actually active, by real chat, not by config inspection | P5 | 1/3/6 | 3.2 | NOT_RUN |
-| P7 | Dispose of the stale `docs-5` branch `release-lifecycle-v2-scope-candidate-20260929` | P0 | 1/1/2 | 1.2 | NOT_RUN |
+| P2 | **Operator gate**: pick `agent.sandbox_allow_unsandboxed_exec` = `true` or `false` on `desk` | P0 | 0/0/0 | 0 (human) | DONE |
+| P3 | Apply the P2 value on `desk`; re-verify with a real `chat -m` invocation | P2 | 1/2/3 | 2.0 | DONE |
+| P4 | Write `~/.kiro/crew/.env` with `CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim` | P0 | 1/1/2 | 1.2 | DONE |
+| P5 | Full gateway stop/start (`.env` edits are only read at boot) | P4 | 1/2/4 | 2.2 | DONE |
+| P6 | Verify read-only mode is actually active, by real chat, not by config inspection | P5 | 1/3/6 | 3.2 | UNKNOWN |
+| P7 | Dispose of the stale `docs-5` branch `release-lifecycle-v2-scope-candidate-20260929` | P0 | 1/1/2 | 1.2 | DONE |
 | P8 | Record the real log/disk trend (`gateway.err`, `diag/` ~3.4 MB/day, 53 GiB free) | P0 | 1/1/2 | 1.2 | NOT_RUN |
 | P9 | Integration verify: full test suite + one live end-to-end chat | P1,P3,P6,P7,P8 | 2/3/5 | 3.2 | NOT_RUN |
 | P10 | Close-out: update `07_PILOT_RESULTS.md` + `ACP-ADOPTION-SHIM.md` with measured outcomes | P9 | 1/1/2 | 1.2 | NOT_RUN |
