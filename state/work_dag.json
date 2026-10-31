@@ -57,9 +57,26 @@
       "m": 2,
       "p": 4,
       "pert": 2.2,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/shim-binary-forensics.md",
+        "commit d19eb63"
+      ],
+      "notes": "PRESENT. jcode-acp-native branch fix/acp-session-list-window, verified HEAD e373d80ed. Commit 71f7c0c44 is reachable from no ref in that tree, so it was matched by its introduction literals rather than by ancestry."
+    },
+    {
+      "id": "P10",
+      "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
+      "depends_on": [
+        "P9"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
       "status": "NOT_RUN",
       "evidence": [],
-      "notes": "bounded forensics; informs the writeup, does not gate the wiring"
+      "notes": "no temporal-suffixed docs; update in place"
     },
     {
       "id": "P2",
@@ -188,20 +205,6 @@
       "status": "NOT_RUN",
       "evidence": [],
       "notes": "P3 may remain BLOCKED_OPERATOR; record that rather than faking DONE"
-    },
-    {
-      "id": "P10",
-      "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
-      "depends_on": [
-        "P9"
-      ],
-      "o": 1,
-      "m": 1,
-      "p": 2,
-      "pert": 1.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "no temporal-suffixed docs; update in place"
     }
   ],
   "carried_unknowns": [
