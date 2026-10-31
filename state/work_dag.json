@@ -138,11 +138,12 @@
       "m": 3,
       "p": 6,
       "pert": 3.2,
-      "status": "UNKNOWN",
+      "status": "DONE",
       "evidence": [
-        "acceptance/read-only-mode-verification.md"
+        "acceptance/read-only-mode-verification.md",
+        "acceptance/p6-unknown-resolution.md"
       ],
-      "notes": "resolver returns the shim when .env is loaded (IS_SHIM True), but a live acp_backend=codex turn spawned the genuine .bun/bin/codex-acp and failed initialize after 90s. Load average 91-144 confounds the timeout. acp_backend reverted; chat verified working again."
+      "notes": "Resolver proven (acceptance/p6-unknown-resolution.md): acp/harness/codex.py:673-675 -> client_mod._resolve_codex_acp_bin -> launch_mod._resolve_node_adapter_argv(..., override_env=CODEX_ACP_BIN); with CODEX_ACP_BIN set the resolver returns it verbatim. The gateway service never delivers the variable: service_environment() in kiro_crew/service/common.py:152 builds a closed whitelist that omits it, and ~/.kiro/crew/.env drops unrecognised keys. Live-turn 90s timeout remains unattributed (load 91-144 on 16 cores); not folded into PASS."
     },
     {
       "id": "P7",
@@ -208,14 +209,13 @@
       "pert": 1.2,
       "status": "NOT_RUN",
       "evidence": [],
-      "notes": "no temporal-suffixed docs; update in place"
+      "notes": "still open: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes"
     }
   ],
   "carried_unknowns": [
     "whether the installed Windows KCode build advertises interactionController (source says cfg!(unix); installed binary not probed)",
     "harness/_common.py and Electron app.asar are unread",
     "Windows GUI gateway respawn after a CLI stop is not proven linked",
-    "which code path spawns the codex ACP backend when acp_backend=codex, and whether it reads CODEX_ACP_BIN",
     "whether initialize succeeds for the genuine codex-acp on an idle host (the 90s timeout was measured under load 91-144, so it is unattributed)"
   ],
   "measured_host_state": {
