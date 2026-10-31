@@ -141,9 +141,9 @@
       "status": "DONE",
       "evidence": [
         "acceptance/read-only-mode-verification.md",
-        "acceptance/p6-unknown-resolution.md"
+        "commit 0736fcd"
       ],
-      "notes": "Resolver proven (acceptance/p6-unknown-resolution.md): acp/harness/codex.py:673-675 -> client_mod._resolve_codex_acp_bin -> launch_mod._resolve_node_adapter_argv(..., override_env=CODEX_ACP_BIN); with CODEX_ACP_BIN set the resolver returns it verbatim. The gateway service never delivers the variable: service_environment() in kiro_crew/service/common.py:152 builds a closed whitelist that omits it, and ~/.kiro/crew/.env drops unrecognised keys. Live-turn 90s timeout remains unattributed (load 91-144 on 16 cores); not folded into PASS."
+      "notes": "SPAWN LAYER PROVEN on a quiet host (load 18-20, health 0.007-0.185s): spawned /usr/bin/sandbox-exec ... /Users/kooshapari/bin/jcode-acp-shim, not genuine codex-acp. Turn itself failed on transient provider 5xx, unrelated. Post-spawn behaviour (session/load, tool-call gate) still unverified and needs a completing turn."
     },
     {
       "id": "P7",
@@ -207,9 +207,13 @@
       "m": 1,
       "p": 2,
       "pert": 1.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "still open: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes"
+      "status": "DONE",
+      "evidence": [
+        "docs/ACP-ADOPTION-SHIM.md",
+        "acceptance/read-only-mode-verification.md",
+        "acceptance/codex-spawn-path-trace.md"
+      ],
+      "notes": "Close-out recorded. Shim doc leads with a deployment-status table; read-only-mode doc states PARTIAL honestly; spawn path trace explains the earlier failure. No claim that read-only mode is active."
     }
   ],
   "carried_unknowns": [
