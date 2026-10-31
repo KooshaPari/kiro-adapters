@@ -81,12 +81,16 @@ exactly why a binary-level test was required instead of trusting `git`.
 
 ## 4. Deciding literal
 
-The discriminating bytes occur at offset **106,261,212** (first of three `elicitate_mcp`
-occurrences), as one packed run:
+The discriminating bytes are one packed run starting at offset **106,261,142** and ending
+at the first of three `elicitate_mcp` occurrences, which begins at offset **106,261,212**:
 
 ```
-...lfdev | batch | applet | panel | side_panel | skill_manage | integration_tools | elicit_mcp | medium...
+desktop_selfdev | batch | applet | panel | side_panel | skill_manage | integration_tools | elicitate_mcp | medium
 ```
+
+(An earlier revision of this file rendered the last member as `elicit_mcp`. That was a
+display truncation, not the observed bytes: the literal in the binary is the full
+`elicitate_mcp`.)
 
 `lfdev` is the tail of **`desktop_selfdev`**, the parent commit's *last* array member. The
 run that follows matches the `71f7c0c44` array **in source order**, member for member. A
