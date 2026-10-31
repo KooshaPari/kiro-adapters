@@ -22,23 +22,41 @@
     ]
   },
   "pert_unit": "10-minute blocks",
-  "critical_path": ["P0", "P4", "P5", "P6", "P9", "P10"],
+  "critical_path": [
+    "P0",
+    "P4",
+    "P5",
+    "P6",
+    "P9",
+    "P10"
+  ],
   "critical_path_expectation_blocks": 12.2,
   "nodes": [
     {
       "id": "P0",
       "title": "Persistence spine: DAG doc + state file, committed and pushed",
       "depends_on": [],
-      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
       "status": "DONE",
-      "evidence": ["docs/WORK-DAG.md", "state/work_dag.json"],
+      "evidence": [
+        "docs/WORK-DAG.md",
+        "state/work_dag.json"
+      ],
       "notes": "self-referential node; its own commit hash is recorded in the follow-up commit"
     },
     {
       "id": "P1",
       "title": "Shim binary forensics: does the shipped KCode build carry 71f7c0c44's wider denial set?",
-      "depends_on": ["P0"],
-      "o": 1, "m": 2, "p": 4, "pert": 2.2,
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
       "status": "NOT_RUN",
       "evidence": [],
       "notes": "bounded forensics; informs the writeup, does not gate the wiring"
@@ -46,62 +64,107 @@
     {
       "id": "P2",
       "title": "OPERATOR GATE: choose agent.sandbox_allow_unsandboxed_exec true or false on desk",
-      "depends_on": ["P0"],
-      "o": 0, "m": 0, "p": 0, "pert": 0,
-      "status": "BLOCKED_OPERATOR",
-      "evidence": ["acceptance/windows-sandbox-posture.md"],
-      "notes": "false = Windows harness cannot start an agent; true = works unconfined. Deliberately off the critical path."
+      "depends_on": [
+        "P0"
+      ],
+      "o": 0,
+      "m": 0,
+      "p": 0,
+      "pert": 0,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/windows-sandbox-posture.md"
+      ],
+      "notes": "resolved to ABSENT, re-measured on desk this session. The key was removed by a revert (repo commit 170475c) after a diagnostic agent applied false; the operator never answered the gate directly. Windows has no OS sandbox backend, so false means 'cannot start an agent', not 'isolated'."
     },
     {
       "id": "P3",
       "title": "Apply the P2 value on desk; re-verify with a real chat -m invocation",
-      "depends_on": ["P2"],
-      "o": 1, "m": 2, "p": 3, "pert": 2.0,
-      "status": "BLOCKED_OPERATOR",
-      "evidence": [],
-      "notes": "must be verified by a real chat, never by reading config back"
+      "depends_on": [
+        "P2"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 3,
+      "pert": 2.0,
+      "status": "DONE",
+      "evidence": [
+        "desk chat measured 2026-10-30T18:37Z"
+      ],
+      "notes": "real turn on desk: exit 0 in 19s, stdout DESKOK. Measured by the orchestrator, not taken from another agent's claim."
     },
     {
       "id": "P4",
       "title": "Write ~/.kiro/crew/.env with CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim",
-      "depends_on": ["P0"],
-      "o": 1, "m": 1, "p": 2, "pert": 1.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "~/.kiro/crew/.env is currently ABSENT, so read-only KCode mode is not active. Process env outranks .env; load_credentials(propagate=True) forwards unknown keys via os.environ.setdefault."
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/read-only-mode-verification.md"
+      ],
+      "notes": "~/.kiro/crew/.env written 0600 with CODEX_ACP_BIN; absent before this session"
     },
     {
       "id": "P5",
       "title": "Full gateway stop/start (.env edits are only read at boot)",
-      "depends_on": ["P4"],
-      "o": 1, "m": 2, "p": 4, "pert": 2.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "launchd service dev.kirocrew.gateway"
+      "depends_on": [
+        "P4"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/read-only-mode-verification.md"
+      ],
+      "notes": "gateway restarted; its stderr confirms it parsed .env and will propagate the key"
     },
     {
       "id": "P6",
       "title": "Verify read-only mode is actually active, by real chat",
-      "depends_on": ["P5"],
-      "o": 1, "m": 3, "p": 6, "pert": 3.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "config inspection is not verification"
+      "depends_on": [
+        "P5"
+      ],
+      "o": 1,
+      "m": 3,
+      "p": 6,
+      "pert": 3.2,
+      "status": "UNKNOWN",
+      "evidence": [
+        "acceptance/read-only-mode-verification.md"
+      ],
+      "notes": "resolver returns the shim when .env is loaded (IS_SHIM True), but a live acp_backend=codex turn spawned the genuine .bun/bin/codex-acp and failed initialize after 90s. Load average 91-144 confounds the timeout. acp_backend reverted; chat verified working again."
     },
     {
       "id": "P7",
       "title": "Dispose of the stale docs-5 branch release-lifecycle-v2-scope-candidate-20260929",
-      "depends_on": ["P0"],
-      "o": 1, "m": 1, "p": 2, "pert": 1.2,
-      "status": "NOT_RUN",
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
+      "status": "DONE",
       "evidence": [],
-      "notes": "stale since 2026-09-29 in ~/CodeProjects/docs/docs-5. Push, PR, merge, or delete. Never git branch -D."
+      "notes": "KooshaPari/docs-5 is ARCHIVED (read-only): push fails with 'This repository was archived so it is read-only', which is why the branch was never published. Branch holds 1 commit / 793 insertions across 4 files. NOT deleted. Preserved as ~/Exports/docs5-preserved/release-lifecycle-v2-scope-candidate-20260929.bundle (sha256 c2375da1...) plus a 30K format-patch (sha256 e7d7db38...)."
     },
     {
       "id": "P8",
       "title": "Record the real log/disk trend (gateway.err, diag/ ~3.4 MB/day, 53 GiB free)",
-      "depends_on": ["P0"],
-      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
       "status": "NOT_RUN",
       "evidence": [],
       "notes": "the earlier 150 MB log and 7-min bind premises were measured and refuted"
@@ -109,8 +172,17 @@
     {
       "id": "P9",
       "title": "Integration verify: full test suite + one live end-to-end chat",
-      "depends_on": ["P1", "P3", "P6", "P7", "P8"],
-      "o": 2, "m": 3, "p": 5, "pert": 3.2,
+      "depends_on": [
+        "P1",
+        "P3",
+        "P6",
+        "P7",
+        "P8"
+      ],
+      "o": 2,
+      "m": 3,
+      "p": 5,
+      "pert": 3.2,
       "status": "NOT_RUN",
       "evidence": [],
       "notes": "P3 may remain BLOCKED_OPERATOR; record that rather than faking DONE"
@@ -118,8 +190,13 @@
     {
       "id": "P10",
       "title": "Close-out: update 07_PILOT_RESULTS.md and ACP-ADOPTION-SHIM.md with measured outcomes",
-      "depends_on": ["P9"],
-      "o": 1, "m": 1, "p": 2, "pert": 1.2,
+      "depends_on": [
+        "P9"
+      ],
+      "o": 1,
+      "m": 1,
+      "p": 2,
+      "pert": 1.2,
       "status": "NOT_RUN",
       "evidence": [],
       "notes": "no temporal-suffixed docs; update in place"
@@ -128,6 +205,16 @@
   "carried_unknowns": [
     "whether the installed Windows KCode build advertises interactionController (source says cfg!(unix); installed binary not probed)",
     "harness/_common.py and Electron app.asar are unread",
-    "Windows GUI gateway respawn after a CLI stop is not proven linked"
-  ]
+    "Windows GUI gateway respawn after a CLI stop is not proven linked",
+    "which code path spawns the codex ACP backend when acp_backend=codex, and whether it reads CODEX_ACP_BIN",
+    "whether initialize succeeds for the genuine codex-acp on an idle host (the 90s timeout was measured under load 91-144, so it is unattributed)"
+  ],
+  "measured_host_state": {
+    "gateway_service": "dev.kirocrew.gateway (launchd), healthy",
+    "chat_baseline": "verified working, exit 0",
+    "load_average_during_test": "91-144 on 16 cores; unrelated other-session agents, not terminated",
+    "env_file": "~/.kiro/crew/.env present, 0600, inert while acp_backend is absent",
+    "desk_pilot": "verified working: chat exit 0 in 19s, stdout DESKOK; sandbox_allow_unsandboxed_exec measured ABSENT",
+    "docs5_repo": "KooshaPari/docs-5 archived read-only; stale branch preserved locally as bundle+patch under ~/Exports/docs5-preserved/ and deliberately not deleted"
+  }
 }
