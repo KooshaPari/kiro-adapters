@@ -165,9 +165,11 @@
       "m": 1,
       "p": 2,
       "pert": 1.2,
-      "status": "NOT_RUN",
-      "evidence": [],
-      "notes": "the earlier 150 MB log and 7-min bind premises were measured and refuted"
+      "status": "DONE",
+      "evidence": [
+        "acceptance/observability-baseline.md"
+      ],
+      "notes": "No unbounded log growth (gateway.err 132K, diag 4.0MB, disk 77Gi free). The earlier gateway slowness was NOT the config change: host load was 327 with 171 runnable, driven by a 1.1GB cargo-mutants build for agileplus plus unrelated du/cargo/knip. Separately named a real defect: ~/.jcode/builds/stable/jcode serve (PID 40259, 2d21h) holds 72 unreaped zombies; not reaped because that daemon serves live sessions."
     },
     {
       "id": "P9",
@@ -215,6 +217,8 @@
     "load_average_during_test": "91-144 on 16 cores; unrelated other-session agents, not terminated",
     "env_file": "~/.kiro/crew/.env present, 0600, inert while acp_backend is absent",
     "desk_pilot": "verified working: chat exit 0 in 19s, stdout DESKOK; sandbox_allow_unsandboxed_exec measured ABSENT",
-    "docs5_repo": "KooshaPari/docs-5 archived read-only; stale branch preserved locally as bundle+patch under ~/Exports/docs5-preserved/ and deliberately not deleted"
+    "docs5_repo": "KooshaPari/docs-5 archived read-only; stale branch preserved locally as bundle+patch under ~/Exports/docs5-preserved/ and deliberately not deleted",
+    "load_source": "cargo-mutants agileplus build (1.1GB scratch) + rustc/ld + du + cargo metadata + knip, from OTHER sessions; left running",
+    "known_defect": "jcode serve PID 40259 up 2d21h accumulating 72 unreaped zombie children; not restarted because it serves live sessions"
   }
 }
