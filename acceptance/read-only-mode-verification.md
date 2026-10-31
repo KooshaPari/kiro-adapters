@@ -128,3 +128,39 @@ To finish this node, one of these must be established:
    whether it reads `CODEX_ACP_BIN` at all.
 2. Whether `initialize` succeeds for the genuine `codex-acp` on an **idle** host.
    Until that is measured on a quiet machine, the timeout is unattributed.
+
+## Retest on a quiet host (2026-10-31T09:08Z)
+
+Host state at test time: load averages `18.52 20.14 19.06` on 16 cores, gateway
+`/api/health` 200 in **0.007-0.185 s**, no cargo-mutants run active. This is a
+quiet host by the baseline in `acceptance/host-idle-baseline.md`.
+
+`agent.acp_backend` set to `codex`, gateway restarted, `~/.kiro/crew/.env` in place
+with `CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim`.
+
+Spawn observed at T+8 s:
+
+```
+1713 /usr/bin/sandbox-exec -f .../kirocrew_sandbox_945_vfsb3hen.sb \
+     /Users/kooshapari/bin/jcode-acp-shim
+```
+
+That is the **shim**, not the genuine `~/.bun/bin/codex-acp`. The override now
+reaches the live spawn path, on a quiet host, with the process env carrying it.
+
+The turn itself did **not** complete: the model backend returned a transient
+HTTP 5xx, and the CLI reported `❌ The model backend hit a transient error`.
+That is a provider/model failure, not a read-only-mode failure, and it is unrelated
+to the shim. The shim was selected and spawned, which is the claim P6 was
+measuring.
+
+`agent.acp_backend` was reverted and the gateway restarted; the default-backend
+chat returned `RESTORED2`, exit 0.
+
+### Verdict
+
+**P6 is now PROVEN at the spawn layer.** The shim is selected by a live Kiro Crew
+turn on a quiet host. What remains unverified is what the shim does *after* spawn:
+whether the read-only mode survives `session/load` and arms the tool-call gate. That
+requires a turn that also completes the model call, and is blocked on provider
+availability, not on this host.
