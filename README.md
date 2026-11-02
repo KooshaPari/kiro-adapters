@@ -265,25 +265,32 @@ Be precise about what has and has not been exercised.
 |---|---|
 | `kirocrew` command surface | Verified against `kirocrew 0.11.0-nightly.20261021t201456`. |
 | `kirocrew` gateway | Running on loopback, `http://localhost:5476`. |
-| `kirocrew` status probe | Exercised. Returned `ok`, `gateway_running: true`, `token_auth: true`, `agents_available: 14`, `kas.installed: false`, `ready: false`. |
-| `kirocrew` live agent turn | Not exercised. The KAS engine bundle is not installed, so `ask`, `spawn` and `run_spec` return `BLOCKED`. |
+| `kirocrew` status probe | Exercised 2026-11-02. Returned `ok`, `gateway_running: true`, `token_auth: true`, `agents_available: 16`, `kas.installed: true` (`KAS 0.66.33, Node 22.23.3`), `ready: true`. Earlier revisions of this table said 14 agents with `kas.installed: false`; both were stale. |
+| `kirocrew` live agent turn | Exercised 2026-11-02. `ask` returned `ok`, `code: OK` with the model's answer. The earlier "returns `BLOCKED` because the KAS engine bundle is not installed" note is obsolete: the bundle is installed. |
 | `kirocrew` CLI startup latency | 12s to 46s observed. The adapter short timeout is 30s, so a cold probe can return `TIMEOUT`. |
 | `kirocode` command surface | Implemented, not verified. No `kirocode`, `kiro-cli` or `kiro` binary was present on 2026-10-27. |
-| MCP server | Implemented. JSON-RPC 2.0 over stdio, protocol `2024-11-05`, ten tools advertised. |
+| MCP server | Implemented. JSON-RPC 2.0 over stdio, protocol `2024-11-05`, fourteen tools advertised (this row previously said "ten", contradicting the count above). |
 | CLI | Implemented. Subcommands mirror the MCP tools and return the same envelope. |
 | `jcode api --stdio` handshake | Verified 2026-10-28 against `jcode 0.99.1`. `api-health` returned `OK`, `detail: "jcode-harness-api-bridge/0.1.0 (1)"`, negotiated version 1, `ping: true`. |
 | `jcode` harness-API turn | Verified 2026-10-28. `api-ask` returned `OK` with `BRIDGE_OK` and `JSON_OK`: `message_accepted`, ordered `text_delta`s, `turn_done`, `answer` and `answer_chars` in the envelope. |
 | `jcode_api_sessions` | Exercised 2026-10-28. The released daemon ignores `limit`, so the bridge bounds the list client-side. |
 | MCP server, `jcode-bridge` | Implemented. Advertises the three `jcode_api_*` tools plus the seven task-backend tools; covered by `tests/test_jcode_bridge_wiring.py`. |
 | Kiro Crew as a client of jcode | Verified 2026-10-28. A Kiro Crew agent invoked `@jcode-bridge/jcode_api_ask` and received `KIRO_BRIDGE_OK`; the call is an auto-approved tool invocation in `~/.kiro/crew/security_events.jsonl`. |
-| Kiro Crew running ON jcode | Verified 2026-10-29. Two Kiro Crew sessions with `CODEX_ACP_BIN=~/bin/jcode-acp-shim` answered `JCODE_BACKEND_OK`; the ledger records `governance_decision / agent_backend:codex / allowed`. |
-| Read-only enforcement | Verified 2026-10-29 at the daemon level: with `write`, `edit` and `bash` disabled they are absent from the session's tool set while `read` remains. |
-| Test suite | `PYTHONPATH=src python3 -m unittest discover -s tests` reports `Ran 272 tests`, `OK`, on 2026-10-28. |
+| Kiro Crew running ON jcode | Verified 2026-11-02 end to end. `agent.acp_backend=codex` plus `CODEX_ACP_BIN=~/bin/jcode-acp-shim`; a real `ask` answered `JCODE_BACKEND_OK`, and instrumenting the shim proved it was actually spawned (`invoked argc=0`). Note the 2026-10-29 entry above recorded this without the `acp_backend` setting, which was unset at the time: the shim was then NOT being spawned and the turn was served by KAS. See [acceptance/codex-backend-activation.md](acceptance/codex-backend-activation.md). |
+| Read-only enforcement | Verified 2026-11-02 end to end, not just at the daemon: asked the live agent to write a file. It reported only `read`, `ls`, `agentgrep` and MCP servers, with no `write`/`edit`/`bash`, and the target file was not created. See [acceptance/codex-backend-activation.md](acceptance/codex-backend-activation.md). |
+| Test suite | `PYTHONPATH=src python3 -m unittest discover -s tests -t .` reports `Ran 355 tests`, `OK`, on 2026-11-02. |
 
 The `kirocrew` flags the adapter passes were each checked against the live
 `--help` output of `chat`, `spawn`, `run`, `token`, `status` and
-`kas status`. The live agent turn and the Kiro coding CLI remain unverified,
-so treat those rows as untested code paths rather than proven behaviour.
+`kas status`. The Kiro coding CLI remains unverified, so treat that row as an
+untested code path rather than proven behaviour.
+
+`CODEX_ACP_BIN` alone does not make Kiro Crew use jcode. It only takes effect
+when `agent.acp_backend` names the `codex` slot, because the harness the ACP
+seam spawns is chosen by that setting and `""` (kiro-cli) is the default. The
+shim also pins a provider and model, since the adapter's own default resolved
+to a Bedrock model this host cannot serve and every turn failed with a
+misleading "transient error (HTTP 5xx)".
 
 ## Security notes
 

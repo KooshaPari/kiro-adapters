@@ -138,12 +138,13 @@
       "m": 3,
       "p": 6,
       "pert": 3.2,
-      "status": "UNKNOWN",
+      "status": "DONE",
       "evidence": [
         "acceptance/read-only-mode-verification.md",
+        "acceptance/codex-backend-activation.md",
         "commit 0736fcd"
       ],
-      "notes": "SPAWN LAYER PROVEN on a quiet host (shim selected and spawned). Post-spawn shim probe PASSED (spawnsDaemon False, ADOPTED a live session, gate still refuses bogus id). NOT PROVEN: a full KiroCrew turn completing with read-only armed, because the model backend returned a transient HTTP 5xx. Status corrected from DONE to UNKNOWN to reflect that the full read-only-armed turn was not verified. Provider availability is the blocker, not a shim/spawn/gate fault."
+      "notes": "CLOSED 2026-11-02 by an executed turn. The blocker was never the shim, the spawn or the gate: agent.acp_backend was unset, so the codex slot was never selected and CODEX_ACP_BIN was inert. Setting agent.acp_backend=codex makes the shim spawn. The HTTP 5xx that had hidden this was the ACP adapter's own default model resolving to a Bedrock model this host cannot serve (session/new advertised anthropic.claude-3-5-sonnet-20241022-v2:0); pinning -p opencode-go -m deepseek-v4.1-flash in the shim makes the turn complete. Observed: answer JCODE_BACKEND_OK, then CLEAN_VERIFY_OK after removing the probe. Read-only enforcement measured directly: asked the agent to write /tmp/readonly_probe.txt; it reported only read/ls/agentgrep with no write/bash/edit, and the file was not created."
     },
     {
       "id": "P7",
