@@ -346,5 +346,81 @@ class UpstreamArgvTests(unittest.TestCase):
         self.assertFalse(hasattr(args, "no_selfdev"))
 
 
+class TestDedicatedSessionAdoption(ShimCase):
+    """Bounded, isolated adoption tests for one explicit dedicated session id.
+
+    These use only the throwaway temp session dir, temp socket and an
+    in-process upstream double from ``ShimCase``. They never touch a real
+    user session store, a real daemon, or a live install.
+    """
+
+    DEDICATED = "sess-dedicated-42"
+
+    def _capture_handler(self):
+        seen: List[Tuple[str, Dict[str, Any]]] = []
+
+        def handler(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+            seen.append((method, dict(params)))
+            if method == "session/load":
+                return {"sessionId": params["sessionId"], "modes": []}
+            if method == "session/prompt":
+                return {"stopReason": "end_turn"}
+            return {}
+
+        return seen, handler
+
+    def test_explicit_dedicated_session_id_is_forwarded_verbatim(self) -> None:
+        self.write_session(self.DEDICATED)
+        self.listen()
+        seen, handler = self._capture_handler()
+        shim, upstream = self.shim(handler=handler)
+
+        payload = self.call(
+            shim, "session/load", {"sessionId": self.DEDICATED, "cwd": "/tmp/project"}
+        )
+
+        self.assertNotIn("error", payload)
+        self.assertEqual(payload["result"]["sessionId"], self.DEDICATED)
+        self.assertEqual(len(seen), 1, "session/load must be forwarded exactly once")
+        method, forwarded = seen[0]
+        self.assertEqual(method, "session/load")
+        self.assertEqual(
+            forwarded.get("sessionId"), self.DEDICATED,
+            "the dedicated session id must be forwarded verbatim",
+        )
+        self.assertNotIn("session/new", upstream.calls)
+
+        close_payload = self.call(shim, "session/close", {"sessionId": self.DEDICATED})
+        self.assertFalse(close_payload["result"]["closed"])
+        self.assertTrue(close_payload["result"]["detached"])
+        self.assertNotIn("session/close", upstream.calls)
+        self.assertNotIn("session/new", upstream.calls)
+
+    def test_missing_socket_fails_closed_for_dedicated_session(self) -> None:
+        self.write_session(self.DEDICATED)
+        shim, upstream = self.shim()
+
+        payload = self.call(shim, "session/load", {"sessionId": self.DEDICATED})
+
+        self.assertEqual(payload["error"]["data"]["precondition"], "daemon_not_running")
+        self.assertEqual(upstream.calls, [])
+
+    def test_unknown_dedicated_session_fails_closed(self) -> None:
+        shim, upstream = self.shim()
+
+        payload = self.call(shim, "session/load", {"sessionId": self.DEDICATED})
+
+        self.assertEqual(payload["error"]["data"]["precondition"], "unknown_session")
+        self.assertEqual(upstream.calls, [])
+
+    def test_unsafe_dedicated_session_id_never_touches_filesystem(self) -> None:
+        shim, upstream = self.shim()
+
+        payload = self.call(shim, "session/load", {"sessionId": "../escape"})
+
+        self.assertEqual(payload["error"]["data"]["precondition"], "invalid_session_id")
+        self.assertEqual(upstream.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
