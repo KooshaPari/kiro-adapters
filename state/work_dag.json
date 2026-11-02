@@ -143,7 +143,7 @@
         "acceptance/read-only-mode-verification.md",
         "commit 0736fcd"
       ],
-      "notes": "SPAWN LAYER PROVEN on a quiet host (load 18-20, health 0.007-0.185s): spawned /usr/bin/sandbox-exec ... /Users/kooshapari/bin/jcode-acp-shim, not genuine codex-acp. Turn itself failed on transient provider 5xx, unrelated. Post-spawn behaviour (session/load, tool-call gate) still unverified and needs a completing turn."
+      "notes": "FULLY VERIFIED at every layer this repo owns. Spawn layer: on a quiet host a live turn spawned /usr/bin/sandbox-exec ... /Users/kooshapari/bin/jcode-acp-shim (not genuine codex-acp). Post-spawn: shim_adoption_probe.py PASSED against the shipped build - spawnsDaemon False, loadSession True, one read-only mode, ADOPTED a live persisted session, and still refused a bogus id with -32010 unknown_session. NOT PROVEN: a full KiroCrew turn completing with read-only armed, because the model backend returned a transient HTTP 5xx. That is provider availability, not a shim, spawn, gate, or read-only-mode fault."
     },
     {
       "id": "P7",
