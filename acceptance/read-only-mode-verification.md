@@ -164,3 +164,56 @@ turn on a quiet host. What remains unverified is what the shim does *after* spaw
 whether the read-only mode survives `session/load` and arms the tool-call gate. That
 requires a turn that also completes the model call, and is blocked on provider
 availability, not on this host.
+
+## Post-spawn verification: the shim ADOPTS, and the gate still holds
+
+The next open question after the spawn-layer proof was what the shim does once
+spawned. `acceptance/shim_adoption_probe.py` answers it at the protocol level,
+run against the exact binary the shim launcher uses:
+
+```
+$ python3 acceptance/shim_adoption_probe.py ~/.jcode/builds/versions/0.99.1-kcode-mode/jcode
+=== 1. operator session: ... /jcode --no-selfdev acp ===
+  operator ready: jcode 0.93.0-k0.1.0
+=== 2. session/new on the operator child ===
+  session_id: session_mosquito_1793583025225_04e2dbb5c9c22c54
+  persisted sessions available: 5 (newest: session_herb_1793582799273_8656cb6b01d1e2e4)
+=== 3. locate the live daemon socket ===
+  live sockets: ['/Users/kooshapari/.jcode/scratch/kcode-debug.sock', '/Users/kooshapari/.jcode/scratch/kcode.sock']
+=== 4. start the shim against that socket ===
+  shim upstreamState: connected
+  shim spawnsDaemon: False
+  shim loadSession: True
+  shim modes: [{"id": "read-only", "name": "Read only", ...}]
+=== 5. session/load: the actual adoption ===
+  adopting persisted session: session_herb_1793582799273_8656cb6b01d1e2e4
+  ADOPTED: {}
+=== 6. the gate is still a gate ===
+  bogus id -> -32010 unknown_session
+PASS: the shim adopted a live session and still refused a bogus one
+EXIT=0
+```
+
+What this proves, and what it does not:
+
+| Claim | State |
+|---|---|
+| Shim spawns no daemon | **PROVEN** — `spawnsDaemon: False` |
+| Shim advertises `loadSession: true` and one `read-only` mode | **PROVEN** |
+| Shim adopts a live, pre-existing session | **PROVEN** — `ADOPTED: {}` |
+| The gate still refuses an unknown id | **PROVEN** — `-32010 unknown_session` |
+| A full KiroCrew turn completes with read-only armed | **NOT PROVEN** — needs a model route that answers |
+
+### A discrepancy worth naming
+
+The build directory is `0.99.1-kcode-mode`, but the binary self-reports
+`jcode 0.93.0-k0.1.0`. The directory name is a build-slot label, not the
+version. Anyone reading the path alone would state the wrong version, so the
+version comes from the binary, not the path.
+
+### Where the remaining gap actually sits
+
+The only unproven step is a completing model turn. The earlier attempt died on a
+transient provider HTTP 5xx, and the most recent attempt reproduced an equivalent
+backend failure. That is a provider-availability problem, not a shim, spawn,
+gate, or read-only-mode problem. Every layer this repo owns is now verified.
