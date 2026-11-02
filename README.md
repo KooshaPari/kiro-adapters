@@ -134,6 +134,20 @@ kiro-adapter-mcp --selftest
 
 That prints the `tools/list` payload as JSON and exits.
 
+The server also accepts an inventory-only surface for KiroCrew consumers that must
+not see dispatch, ask or spawn tools:
+
+```bash
+kiro-adapter-mcp --inventory-only --selftest
+kiro-adapter-mcp --mode inventory
+kiro-adapter-mcp --read-only
+```
+
+In that mode only `agent_sessions_list`, `agent_session_get`,
+`agent_session_history` and `agent_sources` are advertised, and a `tools/call` for
+any other tool is rejected at the protocol edge (not merely hidden). The default
+mode remains `full`, so existing MCP registrations are unchanged.
+
 The server exposes fourteen tools: `kirocrew_status`, `kirocrew_agents`,
 `kirocrew_ask`, `kirocrew_spawn`, `kirocrew_spawn_list`,
 `kirocrew_run_spec`, `kirocrew_dashboard_url`, `kirocode_status`,
