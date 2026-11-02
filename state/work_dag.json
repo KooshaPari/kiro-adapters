@@ -138,12 +138,12 @@
       "m": 3,
       "p": 6,
       "pert": 3.2,
-      "status": "DONE",
+      "status": "UNKNOWN",
       "evidence": [
         "acceptance/read-only-mode-verification.md",
         "commit 0736fcd"
       ],
-      "notes": "FULLY VERIFIED at every layer this repo owns. Spawn layer: on a quiet host a live turn spawned /usr/bin/sandbox-exec ... /Users/kooshapari/bin/jcode-acp-shim (not genuine codex-acp). Post-spawn: shim_adoption_probe.py PASSED against the shipped build - spawnsDaemon False, loadSession True, one read-only mode, ADOPTED a live persisted session, and still refused a bogus id with -32010 unknown_session. NOT PROVEN: a full KiroCrew turn completing with read-only armed, because the model backend returned a transient HTTP 5xx. That is provider availability, not a shim, spawn, gate, or read-only-mode fault."
+      "notes": "SPAWN LAYER PROVEN on a quiet host (shim selected and spawned). Post-spawn shim probe PASSED (spawnsDaemon False, ADOPTED a live session, gate still refuses bogus id). NOT PROVEN: a full KiroCrew turn completing with read-only armed, because the model backend returned a transient HTTP 5xx. Status corrected from DONE to UNKNOWN to reflect that the full read-only-armed turn was not verified. Provider availability is the blocker, not a shim/spawn/gate fault."
     },
     {
       "id": "P7",
@@ -173,7 +173,7 @@
       "evidence": [
         "acceptance/observability-baseline.md"
       ],
-      "notes": "No unbounded log growth (gateway.err 132K, diag 4.0MB, disk 77Gi free). The earlier gateway slowness was NOT the config change: host load was 327 with 171 runnable, driven by a 1.1GB cargo-mutants build for agileplus plus unrelated du/cargo/knip. Separately named a real defect: ~/.jcode/builds/stable/jcode serve (PID 40259, 2d21h) holds 72 unreaped zombies; not reaped because that daemon serves live sessions."
+      "notes": "No unbounded log growth (gateway.err 132K, diag 4.0MB, disk 77Gi free). Earlier gateway slowness coincided with host load 327/171 runnable driven by a 1.1GB cargo-mutants build for agileplus plus unrelated du/cargo/knip sweeps; causal link between that load and the slowness is strongly suggested but not proven (quiet-host re-measurement needed before asserting). Separately named a real defect: ~/.jcode/builds/stable/jcode serve (PID 40259, 2d21h) holds 72 unreaped zombies; not reaped because that daemon serves live sessions."
     },
     {
       "id": "P9",
