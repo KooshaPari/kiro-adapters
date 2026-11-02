@@ -3,7 +3,7 @@
   "title": "KiroCrew / jcode adoption close-out",
   "repo": "KooshaPari/kiro-adapters",
   "branch": "main",
-  "status": "ACTIVE",
+  "status": "COMPLETE",
   "resume_protocol": [
     "read docs/WORK-DAG.md",
     "git log --oneline -15",
