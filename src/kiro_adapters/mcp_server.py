@@ -24,6 +24,8 @@ from .kirocrew import KiroCrewAdapter
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "kiro-adapters"
+INVENTORY_TOOL_NAMES = ["agent_sessions_list", "agent_session_get",
+                        "agent_session_history", "agent_sources"]
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -47,6 +49,48 @@ def _code() -> KiroCodeAdapter:
     if _CODE is None:
         _CODE = KiroCodeAdapter()
     return _CODE
+
+
+_SERVER_MODE = "full"
+
+
+def _coerce_mode(mode=None, inventory_only=False, **kwargs) -> str:
+    if inventory_only is True:
+        return "inventory"
+    if mode is None:
+        for key in ("inventory", "read_only", "readonly", "safe",
+                    "inventory_only", "inventory-mode"):
+            if kwargs.get(key) is not None:
+                mode = kwargs.get(key)
+                break
+    if mode is None:
+        return _SERVER_MODE
+    if isinstance(mode, bool):
+        return "inventory" if mode else "full"
+    text = str(mode).strip().lower().replace("_", "-")
+    if text in ("",):
+        return _SERVER_MODE
+    if text in ("inventory", "inventory-only", "read-only", "readonly",
+                "safe", "true", "1", "yes", "on"):
+        return "inventory"
+    if text in ("full", "default", "all", "false", "0", "no", "off"):
+        return "full"
+    if ("inventory" in text or "read" in text or "safe" in text):
+        return "inventory"
+    return "full"
+
+
+def _allowed_tool_names(mode=None, inventory_only=False, **kwargs) -> set:
+    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
+    if resolved == "inventory":
+        return set(INVENTORY_TOOL_NAMES)
+    return {row[0] for row in _TOOLS}
+
+
+def set_server_mode(mode) -> str:
+    global _SERVER_MODE
+    _SERVER_MODE = _coerce_mode(mode)
+    return _SERVER_MODE
 
 
 # -- tool descriptors -----------------------------------------------------
@@ -107,10 +151,17 @@ _TOOLS = [
 ]
 
 
-def build_tools() -> List[Dict[str, Any]]:
-    """Return the tool descriptors advertised by ``tools/list``."""
+def build_tools(mode=None, inventory_only=False, **kwargs) -> List[Dict[str, Any]]:
+    """Return the tool descriptors advertised by ``tools/list``.
+
+    In inventory-only mode only the four read-only inventory tools are
+    advertised; every dispatch/ask/spawn tool is both hidden and rejected.
+    """
+    allowed = _allowed_tool_names(mode, inventory_only=inventory_only, **kwargs)
     tools: List[Dict[str, Any]] = []
     for name, description, props, required in _TOOLS:
+        if name not in allowed:
+            continue
         properties: Dict[str, Any] = {}
         for prop in props.split():
             spec: Dict[str, Any] = {"type": _PROP_TYPES[prop]}
@@ -283,8 +334,19 @@ _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
 }
 
 
-def call_tool(name: str, arguments: Optional[Dict[str, Any]] = None) -> R.AdapterResult:
-    """Run one tool. Never raises: failures come back as an error result."""
+def call_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
+              mode=None, inventory_only=False, **kwargs) -> R.AdapterResult:
+    """Run one tool. Never raises: failures come back as an error result.
+
+    Non-allowlisted tools are rejected even when a caller invokes them by
+    name (they are not merely hidden from ``tools/list``).
+    """
+    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
+    if name not in _allowed_tool_names(resolved):
+        return R.AdapterResult.failure(
+            name.split("_", 1)[0], name, R.ERROR,
+            "tool not available in inventory-only mode: {}".format(name)
+        )
     handler = _HANDLERS.get(name)
     if handler is None:
         return R.AdapterResult.failure(
@@ -307,12 +369,15 @@ def _error(msg_id: Any, code: int, message: str) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
-def handle_message(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def handle_message(message: Dict[str, Any], mode=None, inventory_only=False,
+                    **kwargs) -> Optional[Dict[str, Any]]:
     """Handle one JSON-RPC message.
 
     Returns the response object, or ``None`` for notifications (which by
-    definition get no reply).
+    definition get no reply). ``mode`` selects the tool surface; unknown or
+    non-allowlisted tool calls are rejected rather than dispatched.
     """
+    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
     if not isinstance(message, dict):
         return _error(None, INVALID_REQUEST, "Invalid Request: message must be an object")
     msg_id = message.get("id")
@@ -331,19 +396,23 @@ def handle_message(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if method == "ping":
         return _result(msg_id, {})
     if method == "tools/list":
-        return _result(msg_id, {"tools": build_tools()})
+        return _result(msg_id, {"tools": build_tools(mode=resolved)})
     if method == "tools/call":
-        return _tools_call(msg_id, message)
+        return _tools_call(msg_id, message, mode=resolved)
     return _error(msg_id, METHOD_NOT_FOUND, "Method not found: {}".format(method))
 
 
-def _tools_call(msg_id: Any, message: Dict[str, Any]) -> Dict[str, Any]:
+def _tools_call(msg_id: Any, message: Dict[str, Any], mode=None) -> Dict[str, Any]:
+    resolved = _coerce_mode(mode)
     params = message.get("params")
     if not isinstance(params, dict):
         return _error(msg_id, INVALID_PARAMS, "Invalid params: tools/call needs a params object")
     name = params.get("name")
     if not isinstance(name, str) or not name:
         return _error(msg_id, INVALID_PARAMS, "Invalid params: missing tool name")
+    if name not in _allowed_tool_names(resolved):
+        return _error(msg_id, INVALID_PARAMS,
+                      "Invalid params: tool not available in this server mode: '{}'".format(name))
     if name not in _HANDLERS:
         return _error(msg_id, INVALID_PARAMS, "Invalid params: unknown tool '{}'".format(name))
     arguments = params.get("arguments")
@@ -351,7 +420,7 @@ def _tools_call(msg_id: Any, message: Dict[str, Any]) -> Dict[str, Any]:
         arguments = {}
     if not isinstance(arguments, dict):
         return _error(msg_id, INVALID_PARAMS, "Invalid params: arguments must be an object")
-    result = call_tool(name, arguments)
+    result = call_tool(name, arguments, mode=resolved)
     return _result(msg_id, {
         "content": [{"type": "text", "text": result.to_json()}],
         "isError": not result.ok,
@@ -368,8 +437,12 @@ def _write(stream: Any, payload: Dict[str, Any]) -> None:
     stream.flush()
 
 
-def serve(stdin: Any = None, stdout: Any = None) -> int:
+def serve(stdin: Any = None, stdout: Any = None, mode=None,
+         inventory_only=False, **kwargs) -> int:
     """Read JSON-RPC frames from stdin until EOF."""
+    global _SERVER_MODE
+    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
+    _SERVER_MODE = resolved
     source = stdin if stdin is not None else sys.stdin
     sink = stdout if stdout is not None else sys.stdout
     while True:
@@ -385,7 +458,7 @@ def serve(stdin: Any = None, stdout: Any = None) -> int:
             _write(sink, _error(None, PARSE_ERROR, "Parse error: {}".format(exc)))
             continue
         try:
-            response = handle_message(message)
+            response = handle_message(message, mode=resolved)
         except Exception as exc:  # noqa: BLE001 - the server must survive
             _log("internal error: {}".format(exc))
             response = _error(None, INTERNAL_ERROR, "Internal error: {}".format(exc))
@@ -401,13 +474,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument("--selftest", action="store_true",
                         help="print the tools/list payload as JSON and exit")
+    parser.add_argument("--mode", choices=["full", "inventory", "inventory-only",
+                                           "read-only", "readonly"],
+                        default=None,
+                        help="tool surface to expose (default: full)")
+    parser.add_argument("--inventory-only", dest="inventory_only",
+                        action="store_true",
+                        help="expose only the four read-only inventory tools")
+    parser.add_argument("--read-only", dest="read_only", action="store_true",
+                        help="alias for --inventory-only")
     args = parser.parse_args(list(argv) if argv is not None else None)
+    resolved_mode = "inventory" if (args.inventory_only or args.read_only) else args.mode
     if args.selftest:
-        sys.stdout.write(json.dumps({"tools": build_tools()}, indent=2) + "\n")
+        sys.stdout.write(json.dumps({"tools": build_tools(mode=resolved_mode)}, indent=2) + "\n")
         sys.stdout.flush()
         return 0
     try:
-        return serve()
+        return serve(mode=resolved_mode)
     except (BrokenPipeError, KeyboardInterrupt):
         return 0
 
