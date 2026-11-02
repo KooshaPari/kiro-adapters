@@ -55,6 +55,7 @@ class KiroCodeAdapter:
         self._resolved: Optional[str] = None
         self._tried: List[str] = []
         self._help_text: Optional[str] = None
+        self._subcommand_help: Dict[str, str] = {}
         self._config: Optional[Dict[str, Any]] = None
 
     # -- config -----------------------------------------------------------
@@ -128,6 +129,25 @@ class KiroCodeAdapter:
                 self._help_text = (cmd.stdout or "") + "\n" + (cmd.stderr or "")
         return self._help_text or ""
 
+    def subcommand_help_text(self, subcommand: str, refresh: bool = False) -> str:
+        """``<binary> <subcommand> --help`` text, cached per subcommand.
+
+        The top-level ``--help`` names subcommands but does not list their
+        flags. A real case: ``kiro-cli`` documents ``--no-interactive`` on
+        ``chat``, not at the top level, so probing only the top level concluded
+        there was no non-interactive mode and generated ``kiro-cli chat <prompt>``
+        - which drops into a TUI and waits for a human, so an agent call hangs
+        until its timeout. Observed 2026-11-02 against ``kiro-cli 2.37.1``.
+        """
+        if not refresh and subcommand in self._subcommand_help:
+            return self._subcommand_help[subcommand]
+        text = ""
+        if self.binary is not None:
+            cmd = run([self.binary, subcommand, "--help"], timeout=PROBE_TIMEOUT)
+            text = (cmd.stdout or "") + "\n" + (cmd.stderr or "")
+        self._subcommand_help[subcommand] = text
+        return text
+
     def version(self) -> Optional[str]:
         if self.binary is None:
             return None
@@ -137,12 +157,18 @@ class KiroCodeAdapter:
 
     def capabilities(self) -> Dict[str, Any]:
         text = self.help_text()
+        # Flags that matter for a one-shot call live on the subcommand, so fold
+        # its help in before looking for them. `chat` is the only subcommand
+        # this adapter dispatches to.
+        chat_text = self.subcommand_help_text("chat") if "chat" in text else ""
+        combined = text + "\n" + chat_text
         return {
             "has_chat": "chat" in text,
             "has_exec": "exec" in text or "run" in text,
-            "supports_no_interactive": "--no-interactive" in text,
-            "supports_print": "--print" in text or " -p" in text,
+            "supports_no_interactive": "--no-interactive" in combined,
+            "supports_print": "--print" in combined or " -p" in combined,
             "help_bytes": len(text),
+            "chat_help_bytes": len(chat_text),
         }
 
     def status(self) -> R.AdapterResult:

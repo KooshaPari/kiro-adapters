@@ -14,7 +14,7 @@ is launched from an argument list, never through a shell.
 | Adapter | Harness | Status on this machine |
 |---|---|---|
 | `KiroCrewAdapter` | `kirocrew` | Installed, gateway reachable. |
-| `KiroCodeAdapter` | `kirocode` | Not installed. |
+| `KiroCodeAdapter` | `kirocode` | Installed (`kiro-cli 2.37.1`), not authenticated. |
 
 `KiroCrewAdapter` drives the Kiro Crew personal agent, through the
 `kirocrew` CLI and its local gateway. On this machine that is
@@ -268,7 +268,7 @@ Be precise about what has and has not been exercised.
 | `kirocrew` status probe | Exercised 2026-11-02. Returned `ok`, `gateway_running: true`, `token_auth: true`, `agents_available: 16`, `kas.installed: true` (`KAS 0.66.33, Node 22.23.3`), `ready: true`. Earlier revisions of this table said 14 agents with `kas.installed: false`; both were stale. |
 | `kirocrew` live agent turn | Exercised 2026-11-02. `ask` returned `ok`, `code: OK` with the model's answer. The earlier "returns `BLOCKED` because the KAS engine bundle is not installed" note is obsolete: the bundle is installed. |
 | `kirocrew` CLI startup latency | 12s to 46s observed. The adapter short timeout is 30s, so a cold probe can return `TIMEOUT`. |
-| `kirocode` command surface | Implemented, not verified. No `kirocode`, `kiro-cli` or `kiro` binary was present on 2026-10-27. |
+| `kirocode` command surface | Verified 2026-11-02 against `kiro-cli 2.37.1` (installed via `brew install --cask kiro-cli`). Resolution, version read and argv generation all exercised; the generated invocation is `kiro-cli chat --no-interactive <prompt>`. The turn itself is **not** verified: `kiro-cli` reports `Not logged in`, so it needs `kiro-cli login` or `KIRO_API_KEY`. See [acceptance/kirocode-cli-probe.md](acceptance/kirocode-cli-probe.md). |
 | MCP server | Implemented. JSON-RPC 2.0 over stdio, protocol `2024-11-05`, fourteen tools advertised (this row previously said "ten", contradicting the count above). |
 | CLI | Implemented. Subcommands mirror the MCP tools and return the same envelope. |
 | `jcode api --stdio` handshake | Verified 2026-10-28 against `jcode 0.99.1`. `api-health` returned `OK`, `detail: "jcode-harness-api-bridge/0.1.0 (1)"`, negotiated version 1, `ping: true`. |
