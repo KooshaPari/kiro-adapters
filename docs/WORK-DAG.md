@@ -1,6 +1,6 @@
 # Work DAG: KiroCrew / jcode adoption close-out
 
-Status: COMPLETE. Machine-readable twin: `state/work_dag.json`.
+Status: ACTIVE. Machine-readable twin: `state/work_dag.json`.
 Resume protocol: read this file, then `git log --oneline -15`, then `state/work_dag.json`.
 If the session was killed, the DAG tells you where to restart. Nothing here depends on chat history.
 
@@ -39,10 +39,10 @@ Corollary: a node that cannot be made durable should be split until it can.
 | P3 | Apply the P2 value on `desk`; re-verify with a real `chat -m` invocation | P2 | 1/2/3 | 2.0 | DONE |
 | P4 | Write `~/.kiro/crew/.env` with `CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim` | P0 | 1/1/2 | 1.2 | DONE |
 | P5 | Full gateway stop/start (`.env` edits are only read at boot) | P4 | 1/2/4 | 2.2 | DONE |
-| P6 | Verify read-only mode is actually active, by real chat, not by config inspection | P5 | 1/3/6 | 3.2 | DONE |
+| P6 | Verify read-only mode is actually active, by real chat, not by config inspection | P5 | 1/3/6 | 3.2 | UNKNOWN |
 | P7 | Dispose of the stale `docs-5` branch `release-lifecycle-v2-scope-candidate-20260929` | P0 | 1/1/2 | 1.2 | DONE |
 | P8 | Record the real log/disk trend (`gateway.err`, `diag/` ~3.4 MB/day, 53 GiB free) | P0 | 1/1/2 | 1.2 | DONE |
-| P9 | Integration verify: full test suite + one live end-to-end chat | P1,P3,P6,P7,P8 | 2/3/5 | 3.2 | DONE |
+| P9 | Integration verify: full test suite + one live end-to-end chat | P1,P3,P6,P7,P8 | 2/3/5 | 3.2 | UNKNOWN |
 | P10 | Close-out: update `07_PILOT_RESULTS.md` + `ACP-ADOPTION-SHIM.md` with measured outcomes | P9 | 1/1/2 | 1.2 | DONE |
 
 PERT expectation = (O + 4M + P) / 6, in 10-minute blocks. These are **block counts sized
@@ -76,6 +76,19 @@ satisfied with P3 recorded as `BLOCKED_OPERATOR` rather than faked as `DONE`.
   premises that previously consumed a full dispatch on wrong assumptions.
 
 ## Known UNKNOWNs carried forward
+
+## Audit correction (2026-11-02)
+
+- P6 has real KiroCrew `ask` turns and a read-only tool observation recorded in
+  `acceptance/codex-backend-activation.md` (answers `JCODE_BACKEND_OK` and
+  `CLEAN_VERIFY_OK`; write probe file absent; write-capable tools absent). Those
+  observations are real, but they do not prove same externally-started session
+  identity, safe live detach, or cross-host consumer integration. Isolated or
+  synthetic checks must not be treated as proof of that broader integration.
+- P9 cross-host end-to-end integration is not proven. The recorded 355 tests and
+  one live chat are real observations, but they do not establish cross-host
+  end-to-end integration; same externally-started session identity, safe live
+  detach, and cross-host consumer integration remain unverified.
 
 - Whether the installed Windows capability `interactionController` is advertised. Source
   says `cfg!(unix)`; the installed binary was not probed. UNKNOWN, not absent.
