@@ -30,8 +30,8 @@ any agent-config key or environment variable in the `kiro_crew` package.
 The handshake driver is `AcpClient._initialize_session`:
 
 - `kiro_crew/acp/client_start.py:762` — docstring: `"""Handshake: initialize → session/load or session/new → set_mode → set_model."""`
-- `kiro_crew/acp/client_start.py:764` — `init_id = await self._send_request(METHOD_INITIALIZE, self._initialize_params())`
-- `kiro_crew/acp/client_start.py:765` — `init_resp = await self._wait_for_response(init_id, timeout=_INIT_TIMEOUT)`
+- `kiro_crew/acp/client_start.py:765` — `init_id = await self._send_request(METHOD_INITIALIZE, self._initialize_params())`
+- `kiro_crew/acp/client_start.py:766` — `init_resp = await self._wait_for_response(init_id, timeout=_INIT_TIMEOUT)`
 
 ### The `session/load` attempt (taken first, when a resume id exists)
 
@@ -99,12 +99,13 @@ Kiro Crew also drives codex through `AcpRuntime`, which mirrors the same decisio
       raise AcpRuntimeError(f"session/load did not resume session {resume_sid}: {resp}")
   ```
 - `kiro_crew/acp/runtime_session_load.py:216` — `load_params` begins: `{"sessionId": resume_sid, "cwd": session_work_dir, "mcpServers": wire_servers}`
-- `kiro_crew/acp/runtime_session_create.py:398` — the `session/new` path:
+- `kiro_crew/acp/runtime_session_create.py:395` — the `session/new` path:
   `resp = await self._send_and_await(METHOD_SESSION_NEW, params, timeout=budget)`
+- `kiro_crew/acp/runtime_session_create.py:400` —
+  `raise AcpRuntimeError(f"session/new did not return sessionId: {resp}")`
 
-The runtime's `load_session` docstring states the intent explicitly at
-`kiro_crew/acp/runtime_session_load.py:68-70`: *"this issues session/load DIRECTLY (no
-session/new first), using the ORIGINAL sid as sessionId"*.
+- `kiro_crew/acp/runtime_session_load.py:66-70` — the `load_session` docstring states the intent:
+  *"this issues session/load DIRECTLY (no session/new first), using the ORIGINAL sid as sessionId"*.
 
 ---
 
@@ -112,7 +113,7 @@ session/new first), using the ORIGINAL sid as sessionId"*.
 
 **Yes. Capabilities are parsed from the `initialize` response and gate the load attempt.**
 
-- `kiro_crew/acp/client_start.py:777` — `capabilities = init_resp.get("agentCapabilities") or {}`
+- `kiro_crew/acp/client_start.py:776` — `capabilities = init_resp.get("agentCapabilities") or {}`
 - `kiro_crew/acp/client_start.py:778-783` — the capability read:
   ```python
   if self.backend in ACP_BACKENDS_RESUME_WITHOUT_LOAD:
@@ -154,8 +155,8 @@ otherwise it logs at `kiro_crew/acp/client_start.py:968`
 
 Mode ids are read off the session-open response, not the `initialize` response:
 
-- `kiro_crew/acp/client_start.py:441` (comment) — *"Mode ids the backend advertised at session init (session/new|load …)"*
-- `kiro_crew/acp/client_class.py:441` — `self._available_mode_ids` (advertised mode ids)
+- `kiro_crew/acp/client_class.py:441` (comment) — *"Mode ids the backend advertised at session init (session/new|load …)"*
+- `kiro_crew/acp/client_class.py:445` — `self._available_mode_ids: list[str] = []` (advertised mode ids)
 
 ---
 
@@ -166,6 +167,7 @@ Mode ids are read off the session-open response, not the `initialize` response:
 ### (a) `session/set_mode` with `modeId` — **kiro-family only, codex excluded**
 
 - `kiro_crew/acp/client_start.py:1078` — `if self._is_kiro:` (the gate)
+- `kiro_crew/acp/client_start.py:1085` — the modes guard: `if not self._modes_advertised or self._agent in self._available_mode_ids:`
 - `kiro_crew/acp/client_start.py:1092-1095` — **exact call site**:
   ```python
   await self._send_request(
@@ -177,7 +179,7 @@ Mode ids are read off the session-open response, not the `initialize` response:
   `return {"sessionId": session_id, "modeId": agent}`
 - `kiro_crew/acp/types.py:138` — `METHOD_SET_MODE = "session/set_mode"`
 
-The argument name is **`modeId`**. The comment at `kiro_crew/acp/client_start.py:1066-1070`
+The argument name is **`modeId`**. The comment at `kiro_crew/acp/client_start.py:1066-1069`
 explains why codex is excluded: *"claude-agent-acp does handle session/set_mode, but its modeIds
 are permission modes (default, acceptEdits, plan, …), never an agent name"*.
 
@@ -188,6 +190,7 @@ Codex's enforceable boundary is written as a session config option, not a mode:
 - `kiro_crew/acp/harness/codex.py:64-67` —
   *"codex-acp's default ``agent`` mode writes inside the workspace without asking. Its ACP v1
   ``mode`` selector is the enforceable boundary, written over ``session/set_config_option``"*
+  (the section header is at `kiro_crew/acp/harness/codex.py:63`)
 - `kiro_crew/agent_sdk/backends_routing.py:358` — `ACP_BACKEND_CODEX: Routing.SESSION_CONFIG,`
 - `kiro_crew/agent_sdk/backends_routing.py:391-393` — **the exact option/value**:
   ```python
@@ -201,7 +204,9 @@ Codex's enforceable boundary is written as a session config option, not a mode:
       await self._apply_session_permission_routing()
   ```
 - `kiro_crew/acp/client_permissions.py:121` — `async def _apply_session_permission_routing(self: AcpClient) -> None:`
-- `kiro_crew/acp/client_permissions.py:143` — `option_id, value = acp_tool_gate.permission_config_for(backend)`
+- `kiro_crew/acp/client_permissions.py:137-138` — `backend = self.backend` /
+  `option_id, value = acp_tool_gate.permission_config_for(backend)`
+- `kiro_crew/acp/client_permissions.py:139-140` — `issue = acp_tool_gate.session_config_issue(backend, self._acp_config_options)`
 - `kiro_crew/acp/client_permissions.py:156` — **exact call site**: `await self.set_config_option(option_id, value)`
 - `kiro_crew/acp/session_handle_model_selection.py:519-521` — the wire payload:
   ```python
@@ -216,11 +221,12 @@ Codex's enforceable boundary is written as a session config option, not a mode:
 `session/set_config_option` with argument names `configId="mode"` and `value="read-only"`.**
 It is NOT written via `session/set_mode` / `modeId`.
 
-**Failure handling of that write:** `kiro_crew/acp/client_permissions.py:157-176` — if the write
-is rejected, the driver records an observed **BYPASSED** verdict via
-`acp_tool_gate.enforce_runtime_routing(..., verdict=acp_tool_gate.Verdict.BYPASSED, ...)`. If the
-option was **not advertised**, the verdict is **INDETERMINATE** (`kiro_crew/acp/client_permissions.py:143-155`).
-Neither verdict is silently ignored.
+**Failure handling of that write:** `kiro_crew/acp/client_permissions.py:144-149` — if the option was
+**not advertised**, the verdict is **INDETERMINATE** (`acp_tool_gate.enforce_runtime_routing(...,
+verdict=acp_tool_gate.Verdict.INDETERMINATE, ...)`), per the comment at
+`kiro_crew/acp/client_permissions.py:141-143`: *"Not advertised: INDETERMINATE, never BYPASSED."*
+A rejected write is recorded as an observed **BYPASSED** verdict. Neither verdict is silently
+ignored.
 
 ---
 
@@ -267,8 +273,9 @@ Where the id is threaded through:
 
 **Config key: NONE.** The `kiro_crew` package exposes no agent-config key and no environment
 variable that names an existing session to adopt. The only env var in the codex spawn path is
-`CODEX_ACP_BIN` (`kiro_crew/acp/client_spawn_env.py:103`), which names the **binary**, not a
-session. Grepping `kiro_crew/config/sections_agent.py` for "session" yields only prose in field
+`CODEX_ACP_BIN` (`kiro_crew/acp/client_spawn_env.py:103` as `_ENV_CODEX_ACP_BIN`, applied at
+`kiro_crew/acp/client_spawn_env.py:238-239`), which names the **binary**, not a session.
+Grepping `kiro_crew/config/sections_agent.py` for "session" yields only prose in field
 descriptions and unrelated fields such as `session_sharing`
 (`kiro_crew/config/sections_agent.py:550`) — there is **no** `resume_sid`, `session_id`, or
 `existing_session` field on `AgentConfig` (`class AgentConfig` at
@@ -297,6 +304,10 @@ propagates out of `_new_session_following_substitution` and out of `_initialize_
 - `kiro_crew/acp/client_start.py:996-1018`:
   ```python
   if not self._session_id:
+      # Both the initial attempt and the substitution retry failed to
+      # yield a session. Raise a clear, actionable error instead of
+      # letting the next step die on the opaque "Cannot set config
+      # option before session is initialized" guard.
       ...
       raise AcpError(
           "session/new returned no sessionId"
@@ -304,9 +315,8 @@ propagates out of `_new_session_following_substitution` and out of `_initialize_
           + "; the backend did not create a session."
       )
   ```
-  The comment at `kiro_crew/acp/client_start.py:997-1000` states the intent: *"Raise a clear,
-  actionable error instead of letting the next step die on the opaque 'Cannot set config option
-  before session is initialized' guard."*
+  The message string is at `kiro_crew/acp/client_start.py:1011`; the rationale comment is at
+  `kiro_crew/acp/client_start.py:997-1000`.
 
 - Runtime equivalent: `kiro_crew/acp/runtime_session_create.py:400` —
   `raise AcpRuntimeError(f"session/new did not return sessionId: {resp}")`
@@ -351,13 +361,13 @@ Grep results for `resume_sid`, `resume_session_id`, `existing_session`, `session
 
 | Symbol | Location | What it is |
 |---|---|---|
-| `_resume_session_id` | `kiro_crew/acp/client_class.py:414` (init to `None`) | in-memory client field |
+| `_resume_session_id` | `kiro_crew/acp/client_class.py:410` (init to `None`) | in-memory client field |
 | `set_resume_session_id` | `kiro_crew/acp/client_lifecycle.py:144` | client setter |
 | `set_resume_session_id` | `kiro_crew/acp/session_provider.py:1509` | provider setter |
 | `resume_sid` (local) | `kiro_crew/session_allocation_parts/get_or_create.py:558, 568, 889, 892` | derived from Crew's internal `_session_map` |
 | `resume_sid` (local) | `kiro_crew/acp/client_start.py:827` | read once, then cleared at `:828` |
 | `resume_sid` (local) | `kiro_crew/acp/runtime_session_load.py:216` | the `sessionId` sent on load |
-| `CODEX_ACP_BIN` | `kiro_crew/acp/client_spawn_env.py:103` | names the **binary**, not a session |
+| `CODEX_ACP_BIN` | `kiro_crew/acp/client_spawn_env.py:103` (env name), `:238-239` (applied) | names the **binary**, not a session |
 
 `AgentConfig` is defined at `kiro_crew/config/sections_agent.py:73`. Its fields include
 `approval_mode`, `streaming`, `model`, `role_models`, `role_efforts`, `model_context_tokens`,
