@@ -44,6 +44,7 @@ from ._process_verdicts import (  # noqa: F401  (re-exported public surface)
     UNKNOWN_START,
 )
 from ._windows_table import (  # noqa: F401  (re-exported public surface)
+    read_windows_process_identities,
     read_windows_table,
     scan_windows,
     windows_liveness,
@@ -120,8 +121,18 @@ def process_start(pid: int) -> str:
     therefore never matched itself again; the start time alone is stable.
     """
     if is_windows():
-        # Windows has no ``ps`` and no cheap start time.
-        return UNKNOWN_START
+        # Windows has a read-only CIM-backed creation time now. Resolve it
+        # without os.kill or unbounded enumeration.
+        identities = read_windows_process_identities([pid])
+        if identities is None:
+            return UNKNOWN_START
+        identity = identities.get(int(pid)) if isinstance(identities, dict) else None
+        if not identity:
+            return UNKNOWN_START
+        creation = identity[0] if isinstance(identity, tuple) else None
+        if not isinstance(creation, str) or not creation.strip():
+            return UNKNOWN_START
+        return creation.strip()
     try:
         out = subprocess.run(
             ["ps", "-o", "lstart=", "-p", str(pid)],
@@ -141,7 +152,16 @@ def process_start(pid: int) -> str:
 def executable_path(pid: int) -> Optional[str]:
     """The command path for ``pid``, or None when it cannot be read."""
     if is_windows():
-        return None
+        identities = read_windows_process_identities([pid])
+        if identities is None:
+            return None
+        identity = identities.get(int(pid)) if isinstance(identities, dict) else None
+        if not identity or not isinstance(identity, tuple) or len(identity) < 2:
+            return None
+        executable = identity[1]
+        if not isinstance(executable, str) or not executable.strip():
+            return None
+        return executable.strip()
     try:
         out = subprocess.run(
             ["ps", "-o", "comm=", "-p", str(pid)],

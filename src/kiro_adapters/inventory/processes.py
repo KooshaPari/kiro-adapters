@@ -138,10 +138,31 @@ def describe_many(pids: Iterable[int]) -> Dict[int, ProcessInstance]:
     if not wanted:
         return {}
     if process_table.is_windows():
-        # tasklist has no start time, so no pid can be bound to a process on
-        # this platform. Return nothing rather than a pid dressed up as an
-        # identity; callers use :func:`liveness_many` for the verdict.
-        return {}
+        # Windows can bind a pid via CIM read-only creation time + executable
+        # path. Query only the requested pids (bounded), never enumerate all.
+        identities = process_table.read_windows_process_identities(list(wanted))
+        if identities is None:
+            return {}
+        bound: Dict[int, ProcessInstance] = {}
+        shared_boot = boot_id()
+        for pid in wanted:
+            identity = identities.get(pid) if isinstance(identities, dict) else None
+            if not identity or not isinstance(identity, tuple) or len(identity) < 2:
+                continue
+            creation, executable = identity[0], identity[1]
+            if not isinstance(creation, str) or not creation.strip():
+                continue
+            if not isinstance(executable, str) or not executable.strip():
+                continue
+            if liveness(pid) != ALIVE:
+                continue
+            bound[pid] = ProcessInstance(
+                pid=int(pid),
+                start_identity=creation.strip(),
+                boot_id=shared_boot,
+                executable_path=executable.strip(),
+            )
+        return bound
     listed = process_table.cached_scan() or {}
     bound: Dict[int, ProcessInstance] = {}
     for pid in wanted:

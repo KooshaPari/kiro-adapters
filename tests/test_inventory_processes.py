@@ -263,5 +263,75 @@ class UnverifiableIdentityTests(unittest.TestCase):
             self.assertEqual(describe_many([os.getpid()]), {})
 
 
+class WindowsCimIdentityTests(unittest.TestCase):
+    """Read-only Windows process identity via CIM: mocks only.
+
+    No real tasklist/powershell/CIM runs; the platform answer and the
+    subprocess result are stubbed, so these tests do not claim live
+    Windows validation.
+    """
+
+    def test_a_bound_windows_pid_yields_a_process_instance(self):
+        from kiro_adapters.inventory import process_table
+
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "read_windows_process_identities", return_value={os.getpid(): ("2026-11-03T00:00:00+00:00", "C:\\\\x.exe")}
+            ):
+                with mock.patch.object(process_table, "windows_liveness", return_value=process_table.ALIVE):
+                    found = describe_many([os.getpid()])
+        self.assertIn(os.getpid(), found)
+        self.assertEqual(found[os.getpid()].start_identity, "2026-11-03T00:00:00+00:00")
+
+    def test_pid_reuse_is_rejected_on_windows(self):
+        from kiro_adapters.inventory import process_table
+
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "read_windows_process_identities", return_value={os.getpid(): ("NEW", "C:\\\\x.exe")}
+            ):
+                with mock.patch.object(process_table, "windows_liveness", return_value=process_table.ALIVE):
+                    recorded = ProcessInstance(
+                        pid=os.getpid(),
+                        start_identity="OLD",
+                        boot_id=boot_id(),
+                        executable_path="C:\\\\x.exe",
+                    )
+                    self.assertFalse(same_process(recorded, os.getpid()))
+
+    def test_access_denied_fails_closed(self):
+        from kiro_adapters.inventory import process_table
+
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "read_windows_process_identities", return_value=None
+            ):
+                self.assertEqual(process_table.process_start(os.getpid()), process_table.UNKNOWN_START)
+                self.assertIsNone(process_table.executable_path(os.getpid()))
+
+    def test_malformed_snapshot_drops_partial_rows(self):
+        from kiro_adapters.inventory import process_table
+
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "read_windows_process_identities", return_value={}
+            ):
+                self.assertEqual(describe_many([os.getpid()]), {})
+
+    def test_existing_fallback_remains_when_unbound(self):
+        from kiro_adapters.inventory import process_table
+
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "read_windows_process_identities", return_value={}
+            ):
+                with mock.patch.object(
+                    process_table, "windows_liveness", return_value=process_table.ALIVE
+                ):
+                    with mock.patch.object(process_table, "windows_table", return_value={os.getpid(): "x.exe"}):
+                        verdicts = process_table.liveness_many([os.getpid()])
+        self.assertEqual(verdicts, {os.getpid(): process_table.ALIVE})
+
+
 if __name__ == "__main__":
     unittest.main()

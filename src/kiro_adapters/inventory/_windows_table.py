@@ -13,6 +13,7 @@ It also owns the Windows snapshot, which cannot bind a pid to a process because
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from typing import Dict, Optional
@@ -125,3 +126,100 @@ def windows_liveness(pid: int) -> str:
         if found == pid:
             return ALIVE
     return UNKNOWN
+
+
+# -- read-only Windows process identity via CIM ----------------------------
+
+
+def _chunked(items, size):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def read_windows_process_identities(pids) -> Optional[Dict[int, tuple]]:
+    """Read PID + creation time + executable path for the given pids.
+
+    Uses the Windows CIM (``Win32_Process``) read-only. Only the requested
+    pids are queried: no full process enumeration, no command lines, no user
+    secrets. Returns ``None`` when the read could not be performed at all
+    (denied, missing tool, malformed output). An empty dict means the read
+    succeeded but bound no pid. Per-pid partial/ambiguous rows are dropped
+    rather than trusted.
+    """
+    wanted = []
+    for raw in pids:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid > 0:
+            wanted.append(pid)
+    if not wanted:
+        return {}
+    wanted_set = set(wanted)
+    result: Dict[int, tuple] = {}
+    for chunk in _chunked(wanted, 64):
+        chunk_result = _read_windows_process_identity_chunk(chunk, wanted_set)
+        if chunk_result is None:
+            # A failed read is not evidence. Fail closed for the whole request
+            # rather than silently dropping the unread pids.
+            return None
+        result.update(chunk_result)
+    return result
+
+
+def _read_windows_process_identity_chunk(pids, wanted_set):
+    """One bounded CIM read for a small set of pids."""
+    if not pids:
+        return {}
+    filter_expr = " OR ".join("ProcessId={}".format(pid) for pid in pids)
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"{filter}\" | "
+        "ForEach-Object {{ "
+        "$creation = $null; "
+        "if ($_.CreationDate) {{ $creation = $_.CreationDate.ToUniversalTime().ToString('o') }}; "
+        "[PSCustomObject]@{{ pid = $_.ProcessId; creation = $creation; executable = $_.ExecutablePath }} "
+        "}} | ConvertTo-Json -Compress"
+    ).format(filter=filter_expr)
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    text = (out.stdout or "").strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return None
+    chunk_result: Dict[int, tuple] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            pid = int(item.get("pid"))
+        except (TypeError, ValueError):
+            continue
+        if pid not in wanted_set:
+            # Unexpected/ambiguous row: do not trust it.
+            continue
+        creation = item.get("creation")
+        executable = item.get("executable")
+        if not isinstance(creation, str) or not creation.strip():
+            continue
+        if not isinstance(executable, str) or not executable.strip():
+            continue
+        chunk_result[pid] = (creation.strip(), executable.strip())
+    return chunk_result
