@@ -122,3 +122,53 @@ Not established:
 - Any successful Kiro Code turn. Blocked on authentication.
 - Anything about Kiro Code's ACP behaviour. This adapter drives the CLI as a
   subprocess; there is no ACP layer for Kiro Code, unlike the Kiro Crew path.
+
+## Why there is no "Kiro Code uses jcode as its backend" mode
+
+Recorded 2026-11-02 after attempting it, because the symmetric goal — make the
+Kiro coding CLI run on jcode, the way Kiro Crew does — is **not achievable with
+kiro-cli 2.37.1**, and it is worth not rediscovering.
+
+Kiro Crew supports it because it honours an unpinned operator override,
+`CODEX_ACP_BIN`, and only consults it for the `codex` slot. `kiro-cli` has no
+equivalent. What it has, and why each is not the answer:
+
+| Surface | What it is | Why it does not help |
+|---|---|---|
+| `KIRO_CLI_ACP_CLI` (env var) | Present in the binary, and the obvious candidate | The login gate is evaluated **first**. Setting it and running `kiro-cli chat --no-interactive` still prints `Not logged in`, and a wrapper named by it was **never invoked** (verified with an invocation-logging shim). |
+| `kiro-cli acp` | A real ACP **agent** server; it answers `initialize` | It advertises `authMethods: [{"id": "kiro-login", ...}]` and empty `sessionCapabilities`, so it cannot serve a session without Kiro credentials. It is an agent to be driven, not a client that delegates. |
+| `acp.agentEngine` | The only `acp.*` setting (`v1`\|`v2`\|`v3`) | Selects one of Kiro's **own** engines, not an external one. |
+| `external_acp` | Appears in the binary next to `interactive_cli` / `noninteractive_cli` | It is a **telemetry label** for `session_interface`, not a selectable mode. |
+| `kiro-cli serve` | Persistent WebSocket server | "for the v3 engine" — still Kiro's engine. |
+| `~/.kiro/settings/cli.json` | Settings file | Contained `{}` (2 bytes). No provider, endpoint, or BYO-model key exists to set. |
+
+`kiro-cli --help` lists `chat`, `acp` (hidden), `serve`, `agent`, `login`,
+`settings`, and so on; every inference path terminates at the same Kiro login
+check.
+
+### Consequence
+
+Without Kiro's API there is nothing for this adapter to *drive*. A request to
+`kiro-cli chat --no-interactive <prompt>`, correctly built, terminates in:
+
+```
+Not logged in. Set the KIRO_API_KEY environment variable or run `kiro-cli login` first.
+```
+
+So the adapter's honest scope is **detection and capability probing**: resolve
+the binary, read its version, and report the auth state so an operator can see
+why a turn would fail. `ask()` remains implemented and correct — it builds a
+valid invocation and surfaces the CLI's own error — but it cannot succeed
+unauthenticated, and `verified_live` stays `false` to say so.
+
+If Kiro credentials are ever acceptable, `ask()` should work unchanged; the
+adapter needs no rework, only authentication.
+
+### The asymmetry worth stating plainly
+
+- **Kiro Crew → jcode: works, and uses no Kiro API.** The shim pins
+  `-p opencode-go -m deepseek-v4.1-flash`, so Kiro Crew's turns run through
+  jcode on the opencode-go pool. Verified by live turns returning
+  `JCODE_BACKEND_OK`.
+- **Kiro Code → jcode: not possible.** Not a missing adapter feature — the
+  harness offers no injection point that is not gated behind its own login.
