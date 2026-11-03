@@ -211,7 +211,17 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     if recorded.start_identity == process_table.UNKNOWN_START:
         # We cannot prove identity; do not claim it.
         return False
-    return now_start == recorded.start_identity
+    if now_start != recorded.start_identity:
+        return False
+    # When both sides recorded an executable path, it must agree too:
+    # a recycled pid can keep the same creation time only in adversarial or
+    # buggy probes, but an executable change is a definitive mismatch.
+    recorded_exe = getattr(recorded, "executable_path", None)
+    if recorded_exe:
+        now_exe = process_table.executable_path(current_pid)
+        if now_exe and now_exe != recorded_exe:
+            return False
+    return True
 
 
 def pid_start_identity(pid: int) -> Optional[str]:

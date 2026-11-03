@@ -19,6 +19,8 @@ import time
 from typing import Dict, Optional
 
 from ._process_verdicts import ALIVE, GONE, UNKNOWN
+
+_MAX_OUTPUT_BYTES = 1_000_000
 from .model import ProcessInstance
 
 _WINDOWS_TABLE: Optional[Dict[int, str]] = None
@@ -72,12 +74,18 @@ def read_windows_table() -> Optional[Dict[int, str]]:
             ["tasklist", "/FO", "CSV", "/NH"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
+        return None
+    if (out.stderr or "").strip():
+        return None
+    if len(out.stdout or "") > _MAX_OUTPUT_BYTES:
         return None
     table: Dict[int, str] = {}
     for line in (out.stdout or "").splitlines():
@@ -105,12 +113,18 @@ def windows_liveness(pid: int) -> str:
             ["tasklist", "/FI", "PID eq {}".format(pid), "/NH"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return UNKNOWN
     if out.returncode != 0:
+        return UNKNOWN
+    if (out.stderr or "").strip():
+        return UNKNOWN
+    if len(out.stdout or "") > _MAX_OUTPUT_BYTES:
         return UNKNOWN
     text = out.stdout or ""
     if "no tasks" in text.lower():
@@ -172,9 +186,12 @@ def _read_windows_process_identity_chunk(pids, wanted_set):
     """One bounded CIM read for a small set of pids."""
     if not pids:
         return {}
+    if not all(isinstance(pid, int) and pid > 0 for pid in pids):
+        return None
     filter_expr = " OR ".join("ProcessId={}".format(pid) for pid in pids)
     script = (
-        "Get-CimInstance Win32_Process -Filter \"{filter}\" | "
+        "$ErrorActionPreference = 'Stop'; "
+        "Get-CimInstance Win32_Process -Filter \"{filter}\" -ErrorAction Stop | "
         "ForEach-Object {{ "
         "$creation = $null; "
         "if ($_.CreationDate) {{ $creation = $_.CreationDate.ToUniversalTime().ToString('o') }}; "
@@ -186,19 +203,27 @@ def _read_windows_process_identity_chunk(pids, wanted_set):
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return None
     if out.returncode != 0:
+        return None
+    # PowerShell can report a non-terminating error on stderr while still
+    # exiting 0. Treat any stderr output as a failed read.
+    if (out.stderr or "").strip():
+        return None
+    if len(out.stdout or "") > _MAX_OUTPUT_BYTES:
         return None
     text = (out.stdout or "").strip()
     if not text:
         return {}
     try:
         data = json.loads(text)
-    except (ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError, TypeError):
         return None
     if isinstance(data, dict):
         data = [data]

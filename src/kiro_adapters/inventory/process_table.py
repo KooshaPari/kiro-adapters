@@ -100,6 +100,8 @@ def boot_id() -> str:
                 ["sysctl", "-n", "kern.boottime"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )
@@ -109,8 +111,13 @@ def boot_id() -> str:
         except (OSError, subprocess.SubprocessError):
             pass
     # Fall back to the boot time of the current process, which is at least
-    # stable within a boot.
-    return "proc-start:{}".format(process_start(os.getpid()))
+    # stable within a boot. If the platform will not even report that, do not
+    # fabricate a stable boot identity from "unknown": a constant sentinel would
+    # make pre-reboot and post-reboot handles indistinguishable.
+    start = process_start(os.getpid())
+    if start == UNKNOWN_START:
+        return UNKNOWN_START
+    return "proc-start:{}".format(start)
 
 
 def process_start(pid: int) -> str:
@@ -138,6 +145,8 @@ def process_start(pid: int) -> str:
             ["ps", "-o", "lstart=", "-p", str(pid)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -167,6 +176,8 @@ def executable_path(pid: int) -> Optional[str]:
             ["ps", "-o", "comm=", "-p", str(pid)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -323,6 +334,8 @@ def scan_posix() -> Optional[Dict[int, ProcessInstance]]:
             ["ps", "-A", "-o", "pid=,lstart=,comm="],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             check=False,
         )
