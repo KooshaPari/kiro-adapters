@@ -214,6 +214,40 @@ than by a claim.
 CODEX_ACP_BIN=~/bin/jcode-acp-shim kirocrew run TASK.md
 ```
 
+#### Installing it properly
+
+`CODEX_ACP_BIN` alone is **not enough**, and this is the one detail that cost a
+full session to diagnose: Kiro Crew only resolves the `codex` harness when
+`agent.acp_backend` names that slot, and the default is `""` which means
+kiro-cli. With `acp_backend` unset the shim is *never spawned*, turns are served
+by the KAS engine instead, and every visible signal still says "configured".
+
+Both settings are required, so use the installer rather than setting one by hand:
+
+```bash
+# idempotent; --dry-run shows what would change
+./scripts/install/install-kirocrew-jcode-backend.sh
+kirocrew restart            # .env and config.json are both read at boot
+
+# check every link, then prove the path with one real turn
+./scripts/install/verify-kirocrew-jcode-backend.sh
+./scripts/install/verify-kirocrew-jcode-backend.sh --live
+```
+
+The verifier reports each link separately, because one green light is not
+enough. Its negative control is the misconfiguration above: with everything else
+correct and `acp_backend` unset it fails with
+`agent.acp_backend is unset (defaults to "" = kiro-cli, so the shim is NEVER spawned)`.
+
+The shim pins a provider and model (`opencode-go` / `deepseek-v4.1-flash`) so
+that turns run on jcode's own route rather than Kiro's API. The ACP adapter's
+unpinned default resolved to a Bedrock model many hosts cannot serve, which
+surfaces as a misleading `transient error (HTTP 5xx)` while the handshake is
+perfectly healthy. Override with `JCODE_ACP_SHIM_PROVIDER` / `JCODE_ACP_SHIM_MODEL`.
+
+See [acceptance/codex-backend-activation.md](acceptance/codex-backend-activation.md)
+for how the two defects were separated and measured.
+
 `~/bin/jcode-acp-shim` execs `jcode acp`. The agent Kiro Crew spawns is jcode
 and reports `agentInfo.name` as `jcode`; the `codex` in the logs is the slot
 Kiro Crew was told to use, not the agent's identity.

@@ -1,0 +1,48 @@
+#!/bin/bash
+# jcode-acp-shim — Kiro Crew's `codex` ACP slot, pointed at jcode.
+#
+# Why this exists
+# ---------------
+# Kiro Crew resolves a backend's ACP binary through an operator override:
+# CODEX_ACP_BIN for the codex slot, OPENCODE_BIN for opencode. For the codex slot
+# the override is run AS-IS with no argv, because any invocation of `codex-acp`
+# enters stdio-server mode and blocks on stdin. So this shim supplies the `acp`
+# subcommand itself; jcode's ACP adapter is `jcode acp`.
+#
+# The codex slot is not a disguise. It is the slot whose permission routing is
+# SESSION_CONFIG: Kiro Crew verifies the agent advertises a `mode` config option
+# and that writing `mode=read-only` succeeds, which is what arms the host's
+# tool-call gate. jcode's ACP implements that option, so the gate is armed by a
+# real, enforced restriction rather than by a claim.
+#
+# KNOWN FOOTGUN: CODEX_ACP_BIN alone does nothing. Kiro Crew only resolves the
+# codex harness when agent.acp_backend names that slot; the default is "" which
+# means kiro-cli. With acp_backend unset the shim is NEVER spawned and turns are
+# served by the KAS engine instead. Use install-kirocrew-jcode-backend.sh, which
+# sets both.
+#
+# Provider/model
+# --------------
+# The ACP adapter's own default model resolved to a Bedrock model that a
+# typical host cannot serve, so every turn died with a misleading
+# "transient error (HTTP 5xx)" while the ACP handshake was healthy. Pin a
+# working route here; override with JCODE_ACP_SHIM_PROVIDER / _MODEL.
+set -euo pipefail
+
+# Resolved at install time by install-kirocrew-jcode-backend.sh. The env
+# override still wins so the shim can be repointed without editing it.
+JCODE="${JCODE_ACP_SHIM_BINARY:-@JCODE_BINARY@}"
+
+PROVIDER="${JCODE_ACP_SHIM_PROVIDER:-@PROVIDER@}"
+MODEL="${JCODE_ACP_SHIM_MODEL:-@MODEL@}"
+
+if [ ! -x "$JCODE" ]; then
+  echo "jcode-acp-shim: jcode binary not executable at $JCODE" >&2
+  exit 127
+fi
+
+# Forward any argv Kiro Crew passes, adding `acp` when it is missing.
+if [ "${1:-}" = "acp" ]; then
+  exec "$JCODE" "$@" -p "$PROVIDER" -m "$MODEL"
+fi
+exec "$JCODE" acp "$@" -p "$PROVIDER" -m "$MODEL"
