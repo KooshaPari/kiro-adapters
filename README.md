@@ -248,9 +248,40 @@ perfectly healthy. Override with `JCODE_ACP_SHIM_PROVIDER` / `JCODE_ACP_SHIM_MOD
 See [acceptance/codex-backend-activation.md](acceptance/codex-backend-activation.md)
 for how the two defects were separated and measured.
 
-`~/bin/jcode-acp-shim` execs `jcode acp`. The agent Kiro Crew spawns is jcode
-and reports `agentInfo.name` as `jcode`; the `codex` in the logs is the slot
-Kiro Crew was told to use, not the agent's identity.
+#### Windows
+
+Windows works, but through a different slot, and the difference is not cosmetic.
+Kiro Crew's `codex`/`opencode`/`deepseek`/`goose`/`pi` slots are **enforced**: it
+will not spawn a third-party binary unless an OS sandbox exists to mask
+credential files. Native Windows has no sandbox backend at all
+(`detect_backend` returns `none` for every mode), so every enforced slot is
+refused there. The `claude` slot is the one slot that is not enforced, so it is
+the only slot that can host jcode on native Windows.
+
+```powershell
+.\scripts\install\install-kirocrew-jcode-backend.ps1 -DryRun   # reports, changes nothing
+.\scripts\install\install-kirocrew-jcode-backend.ps1
+.\scripts\install\verify-kirocrew-jcode-backend.ps1 -Live
+```
+
+The installer reads the host's actual sandbox backend and picks the slot from
+that answer, so there is no per-host decision to get wrong.
+
+**The trade, stated plainly:** the `claude` slot does not force
+`mode=read-only`, and on a sandboxless host the agent subprocess runs without
+credential isolation. The read-only guarantee measured on macOS comes from the
+`codex` slot's enforced routing and does **not** transfer to Windows. Treat a
+Windows install as convenient, not contained. See
+[acceptance/windows-desk-backend.md](acceptance/windows-desk-backend.md).
+
+On Windows the override must also exist in the **process** environment, not just
+in config. `agent.env` is applied to the child after the resolver has already run
+in the parent, so an override that lives only there fails with
+`codex-acp not found` while looking perfectly configured.
+
+On macOS the shim is `~/bin/jcode-acp-shim` and it execs `jcode acp`. The agent
+Kiro Crew spawns is jcode and reports `agentInfo.name` as `jcode`; the `codex` in
+the logs is the slot Kiro Crew was told to use, not the agent's identity.
 
 The override is exported from `~/.zshrc` and points at a **versioned** jcode
 build (`~/.jcode/builds/versions/0.99.1-kcode-mode/jcode`), so a Kiro session
