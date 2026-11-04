@@ -188,27 +188,66 @@ def liveness_many(pids: Iterable[int]) -> Dict[int, str]:
     return process_table.liveness_many(pids)
 
 
+def _exact_pid(value) -> Optional[int]:
+    """``value`` as the positive integer pid it exactly is, else None.
+
+    Nothing is coerced. ``bool`` is refused even though it subclasses ``int``
+    (``True`` would otherwise pass for pid 1), a float is refused rather than
+    truncated (``12.9`` must not answer for pid 12), and a string counts only
+    when it is nothing but digits.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            pid = int(text)
+            return pid if pid > 0 else None
+    return None
+
+
 def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     """True when ``current_pid`` is provably the process ``recorded`` saw.
 
     Every failure is a refusal, never a guess:
 
+    * the recorded pid is not ``current_pid`` -> a different process
     * the pid is gone, or could not be checked -> not the same process
     * the pid is alive but its start time differs -> a *different* process
       recycled onto the same number
     * either the recorded or the current boot identity is unknown -> not
       proven, so not the same process
+    * either start identity is coarse (a one-second ``ps`` timestamp) or
+      unknown -> not proven, so not the same process
     * the executable path cannot be read on either side, or the two paths
       differ -> not proven, so not the same process
 
-    The executable comparison is not a nicety. POSIX ``ps -o lstart=`` reports
-    a start time only to the second, so a pid recycled within the same second
-    as the original process carries the same start text. The executable path
-    is the second, independent witness that separates the two. What cannot be
-    witnessed cannot be asserted, so an unreadable path fails closed rather
-    than degrading to "the pid and the second happened to agree".
+    Two witnesses are required because neither alone is enough. A
+    one-second ``ps`` start time cannot separate a pid recycled inside the
+    same second, so a coarse identity is refused outright; only a subsecond
+    marker (``/proc/<pid>/stat`` starttime, ``proc_pidinfo`` start time) is
+    compared. :mod:`.process_table` prefixes every identity with its
+    resolution, and :func:`process_table.is_precise_start` is the single
+    arbiter. The executable path is the second witness, and an unreadable
+    path on either side fails closed rather than degrading to "the pid and
+    the second happened to agree".
+
+    Windows is always refused today: its boot identity is
+    :data:`process_table.UNKNOWN_START`, so nothing can be placed on a boot
+    timeline even when the CIM creation time and executable match.
     """
     if recorded is None:
+        return False
+    wanted_pid = _exact_pid(current_pid)
+    if wanted_pid is None:
+        return False
+    recorded_pid = _exact_pid(getattr(recorded, "pid", None))
+    if recorded_pid is None or recorded_pid != wanted_pid:
+        # A handle describes one process. Asked about another pid, the only
+        # honest answer is "not the same process". A value that is not a pid
+        # at all is not evidence either.
         return False
     recorded_boot = recorded.boot_id
     current_boot = boot_id()
@@ -222,14 +261,17 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     if recorded_boot != current_boot:
         # The host rebooted. Nothing from before the reboot is the same.
         return False
-    if liveness(current_pid) != ALIVE:
+    if not process_table.is_precise_start(recorded.start_identity):
+        # Coarse (one-second) or unknown: not proof of identity.
         return False
-    now_start = process_table.process_start(current_pid)
+    if liveness(wanted_pid) != ALIVE:
+        return False
+    now_start = process_table.process_start(wanted_pid)
     if now_start == process_table.UNKNOWN_START:
         # We cannot prove identity; do not claim it.
         return False
-    if recorded.start_identity == process_table.UNKNOWN_START:
-        # We cannot prove identity; do not claim it.
+    if not process_table.is_precise_start(now_start):
+        # The current probe degraded to coarse text; that is not proof.
         return False
     if now_start != recorded.start_identity:
         return False
@@ -240,7 +282,7 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     recorded_exe = getattr(recorded, "executable_path", None)
     if not recorded_exe:
         return False
-    now_exe = process_table.executable_path(current_pid)
+    now_exe = process_table.executable_path(wanted_pid)
     if not now_exe:
         return False
     if now_exe != recorded_exe:

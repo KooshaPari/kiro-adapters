@@ -24,8 +24,11 @@ This module is deliberately dependency-free and never writes.
 
 from __future__ import annotations
 
+import ctypes
+import functools
 import os
 import platform
+import struct
 import subprocess
 import sys
 import time
@@ -59,6 +62,18 @@ from ._windows_table import (  # noqa: F401  (re-exported public surface)
 _SCAN_CACHE: Dict[int, ProcessInstance] = {}
 _SCAN_CACHE_AT = 0.0
 _SCAN_CACHE_TTL = 2.0
+
+# Every start identity says how precise it is, because a one-second timestamp
+# cannot separate a pid recycled inside the same second. Identities carrying
+# one of these prefixes are subsecond and may be compared; anything else
+# (including a bare ``ps -o lstart=`` string and :data:`UNKNOWN_START`) is
+# coarse or unknown and must be refused by the policy layer in
+# :mod:`.processes`.
+PRECISE_START_PREFIXES = ("proc-stat:", "proc-bsdinfo:")
+
+# A coarse identity is kept only so it can be displayed; the prefix prevents
+# it from ever being mistaken for a precise one.
+COARSE_START_PREFIX = "lstart:"
 
 
 def is_windows() -> bool:
@@ -138,6 +153,12 @@ def process_start(pid: int) -> str:
     Only the start time is read. An earlier version also read the elapsed
     seconds on Linux, which made the "identity" change on every read and
     therefore never matched itself again; the start time alone is stable.
+
+    The result is prefixed with its resolution. A subsecond marker
+    (``/proc/<pid>/stat`` starttime on Linux, ``proc_pidinfo`` start time on
+    macOS) is used when the platform offers one. The ``ps -o lstart=`` text is
+    returned only as a coarse fallback, and :func:`is_precise_start` says so;
+    callers must not treat a coarse value as a proven identity.
     """
     if is_windows():
         # Windows has a read-only CIM-backed creation time now. Resolve it
@@ -152,6 +173,9 @@ def process_start(pid: int) -> str:
         if not isinstance(creation, str) or not creation.strip():
             return UNKNOWN_START
         return creation.strip()
+    precise = precise_start(pid)
+    if precise is not None:
+        return precise
     try:
         out = subprocess.run(
             ["ps", "-o", "lstart=", "-p", str(pid)],
@@ -167,7 +191,137 @@ def process_start(pid: int) -> str:
     if out.returncode != 0:
         return UNKNOWN_START
     text = " ".join((out.stdout or "").split())
-    return text or UNKNOWN_START
+    if not text:
+        return UNKNOWN_START
+    return COARSE_START_PREFIX + text
+
+
+def is_precise_start(identity: Optional[str]) -> bool:
+    """True when ``identity`` is subsecond and may be compared as an identity.
+
+    :data:`UNKNOWN_START`, a coarse ``lstart:`` value, a legacy bare
+    ``ps`` string, a non-string, and ``None`` are all false. False means
+    "not proof", never "a different process".
+    """
+    if not isinstance(identity, str):
+        return False
+    if identity == UNKNOWN_START:
+        return False
+    return identity.startswith(PRECISE_START_PREFIXES)
+
+
+def precise_start(pid: int) -> Optional[str]:
+    """A subsecond start identity for ``pid``, or None when none is available.
+
+    None is the only failure answer: the caller then falls back to coarse text
+    or to :data:`UNKNOWN_START`. Nothing here invents a value.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    system = platform.system()
+    if system == "Linux":
+        return _linux_precise_start(pid)
+    if system == "Darwin":
+        return _darwin_precise_start(pid)
+    return None
+
+
+def _linux_precise_start(pid: int) -> Optional[str]:
+    """Field 22 (starttime, clock ticks since boot) of ``/proc/<pid>/stat``."""
+    try:
+        with open(
+            "/proc/{}/stat".format(pid), "r", encoding="ascii", errors="replace"
+        ) as fh:
+            raw = fh.read()
+    except (OSError, ValueError):
+        return None
+    return _parse_proc_stat_start(raw)
+
+
+def _parse_proc_stat_start(raw: str) -> Optional[str]:
+    """The ``proc-stat:`` identity from the text of ``/proc/<pid>/stat``."""
+    # The command name is wrapped in parentheses and may itself contain
+    # spaces and parentheses, so fields resume only after the LAST ')'.
+    close = raw.rfind(")")
+    if close < 0:
+        return None
+    rest = raw[close + 1 :].split()
+    # rest[0] is field 3 (state); starttime is field 22.
+    index = 22 - 3
+    if len(rest) <= index:
+        return None
+    ticks = rest[index]
+    if not ticks.isdigit():
+        return None
+    return "proc-stat:" + ticks
+
+
+# ``struct proc_bsdinfo`` from <libproc.h>, a stable libproc ABI. Offsets are
+# spelled out rather than mirrored in a ctypes Structure so that a layout
+# change shows up as a failed self-check (pid and plausible time) instead of a
+# silently wrong value.
+_DARWIN_PROC_PIDTBSDINFO = 3
+_DARWIN_BSDINFO_SIZE = 136
+_DARWIN_PID_OFFSET = 12
+_DARWIN_START_TVSEC_OFFSET = 120
+_DARWIN_START_TVUSEC_OFFSET = 128
+
+
+@functools.lru_cache(maxsize=1)
+def _darwin_libproc():
+    """``libproc`` with a typed ``proc_pidinfo``, or None when unavailable."""
+    try:
+        lib = ctypes.CDLL("libproc.dylib", use_errno=True)
+        lib.proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        lib.proc_pidinfo.restype = ctypes.c_int
+    except (OSError, AttributeError, ValueError):
+        return None
+    return lib
+
+
+def _darwin_precise_start(pid: int) -> Optional[str]:
+    """Microsecond start time from ``proc_pidinfo(PROC_PIDTBSDINFO)``.
+
+    Read-only, no subprocess, no signal. The call is refused for processes the
+    kernel will not describe (it returns a short read or zero); those fall back
+    to coarse text, which the policy layer will refuse.
+    """
+    lib = _darwin_libproc()
+    if lib is None:
+        return None
+    buffer = ctypes.create_string_buffer(_DARWIN_BSDINFO_SIZE)
+    try:
+        read = lib.proc_pidinfo(pid, _DARWIN_PROC_PIDTBSDINFO, 0, buffer, _DARWIN_BSDINFO_SIZE)
+    except (OSError, ValueError):
+        return None
+    if read != _DARWIN_BSDINFO_SIZE:
+        return None
+    raw = buffer.raw
+    try:
+        seen_pid = struct.unpack_from("<I", raw, _DARWIN_PID_OFFSET)[0]
+        seconds = struct.unpack_from("<Q", raw, _DARWIN_START_TVSEC_OFFSET)[0]
+        micros = struct.unpack_from("<Q", raw, _DARWIN_START_TVUSEC_OFFSET)[0]
+    except struct.error:
+        return None
+    if seen_pid != pid:
+        # The struct did not describe the pid we asked about: fail closed.
+        return None
+    now = time.time()
+    if seconds < 1_000_000_000 or seconds > now + 1:
+        return None
+    if micros >= 1_000_000:
+        return None
+    return "proc-bsdinfo:{}.{:06d}".format(seconds, micros)
 
 
 def executable_path(pid: int) -> Optional[str]:
@@ -361,9 +515,15 @@ def scan_posix() -> Optional[Dict[int, ProcessInstance]]:
         if parsed is None:
             continue
         pid, start_identity, comm = parsed
+        # Replace the second-resolution ps text with a subsecond marker where
+        # the platform offers one, so the batched read agrees with the
+        # single-pid read instead of handing back a coarse identity.
+        precise = precise_start(pid)
+        if precise is None:
+            precise = COARSE_START_PREFIX + start_identity
         found[pid] = ProcessInstance(
             pid=pid,
-            start_identity=start_identity,
+            start_identity=precise,
             boot_id=shared_boot,
             executable_path=comm or None,
         )

@@ -10,6 +10,12 @@ than it had observed:
 * the Windows boot-id fallback used the creation time of the *current*
   process, which changes on every run and is therefore not a boot identity.
 
+The follow-up review added two more:
+
+* the recorded pid was never compared with the pid being asked about;
+* a one-second ``lstart`` cannot separate a pid recycled inside the same
+  second, so only a subsecond platform marker may be compared.
+
 These tests pin the refusals. They are synthetic - the platform answer, the
 process table, and the OS probes are stubbed - so no real Windows tooling
 runs and no process is signalled. Standard library only, no network.
@@ -30,14 +36,15 @@ from kiro_adapters.inventory.model import ProcessInstance  # noqa: E402
 from kiro_adapters.inventory.processes import same_process  # noqa: E402
 
 PID = os.getpid()
-START = "Mon Oct 19 08:38:05 2026"
+START = "proc-stat:123456789"
+COARSE = "lstart:Mon Oct 19 08:38:05 2026"
 BOOT = "boot-abc"
 EXE = "/usr/local/bin/agent"
 
 
-def recorded(exe=EXE, start=START, boot=BOOT):
+def recorded(exe=EXE, start=START, boot=BOOT, pid=PID):
     return ProcessInstance(
-        pid=PID,
+        pid=pid,
         start_identity=start,
         boot_id=boot,
         executable_path=exe,
@@ -89,6 +96,98 @@ class ExecutableWitnessTests(unittest.TestCase):
             self.assertFalse(same_process(recorded(), PID))
 
 
+class PidMatchTests(unittest.TestCase):
+    """A handle for one pid can never answer for another."""
+
+    def test_a_handle_for_another_pid_is_rejected(self):
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(pid=PID + 1), PID))
+
+    def test_a_handle_for_the_same_pid_is_accepted(self):
+        with IdentityProbe():
+            self.assertTrue(same_process(recorded(pid=PID), PID))
+
+    def test_a_non_numeric_pid_is_rejected(self):
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(), "not-a-pid"))
+
+    def test_a_missing_recorded_pid_is_rejected_without_raising(self):
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(pid=None), PID))
+
+    def test_a_fractional_pid_is_not_truncated_into_a_match(self):
+        # 4242.9 must not answer for pid 4242.
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(pid=float(PID) + 0.5), PID))
+
+    def test_a_boolean_pid_is_rejected(self):
+        # ``True`` subclasses ``int``; it must not answer for pid 1.
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(pid=True), 1))
+
+    def test_a_digit_string_pid_is_accepted(self):
+        with IdentityProbe():
+            self.assertTrue(same_process(recorded(pid=str(PID)), PID))
+
+
+class StartPrecisionTests(unittest.TestCase):
+    """A coarse one-second start time is not proof of identity."""
+
+    def test_a_coarse_recorded_start_is_rejected(self):
+        with IdentityProbe(start=COARSE):
+            self.assertFalse(same_process(recorded(start=COARSE), PID))
+
+    def test_a_coarse_current_start_is_rejected(self):
+        with IdentityProbe(start=COARSE):
+            self.assertFalse(same_process(recorded(), PID))
+
+    def test_a_legacy_bare_lstart_string_is_rejected(self):
+        legacy = "Mon Oct 19 08:38:05 2026"
+        with IdentityProbe(start=legacy):
+            self.assertFalse(same_process(recorded(start=legacy), PID))
+
+    def test_precision_is_decided_by_the_shared_predicate(self):
+        self.assertTrue(process_table.is_precise_start("proc-stat:42"))
+        self.assertTrue(process_table.is_precise_start("proc-bsdinfo:1.000001"))
+        self.assertFalse(process_table.is_precise_start(COARSE))
+        self.assertFalse(process_table.is_precise_start(process_table.UNKNOWN_START))
+        self.assertFalse(process_table.is_precise_start(None))
+        self.assertFalse(process_table.is_precise_start(""))
+
+
+class LinuxStatParsingTests(unittest.TestCase):
+    """The /proc stat parser finds field 22 even when comm contains parens."""
+
+    @staticmethod
+    def stat(comm: str, starttime: str = "987654") -> str:
+        # Fields 1-2 (pid, comm), then state and the rest through field 22.
+        middle = " ".join(["S"] + ["0"] * 18)  # fields 3..21
+        return "4242 ({}) {} {} 0 0\n".format(comm, middle, starttime)
+
+    def test_plain_command_name_parses(self):
+        self.assertEqual(
+            process_table._parse_proc_stat_start(self.stat("python3")),
+            "proc-stat:987654",
+        )
+
+    def test_command_name_with_spaces_and_parens_parses(self):
+        self.assertEqual(
+            process_table._parse_proc_stat_start(self.stat("a) b (c)")),
+            "proc-stat:987654",
+        )
+
+    def test_truncated_line_is_refused(self):
+        self.assertIsNone(process_table._parse_proc_stat_start("4242 (x) S 0 0"))
+
+    def test_missing_parenthesis_is_refused(self):
+        self.assertIsNone(process_table._parse_proc_stat_start("garbage"))
+
+    def test_non_numeric_starttime_is_refused(self):
+        self.assertIsNone(
+            process_table._parse_proc_stat_start(self.stat("x", starttime="NaN"))
+        )
+
+
 class UnknownIdentityTests(unittest.TestCase):
     """Unknown boot or start identities can never prove a match."""
 
@@ -131,6 +230,26 @@ class WindowsBootIdentityTests(unittest.TestCase):
                 self.assertEqual(
                     process_table.boot_id(), process_table.UNKNOWN_START
                 )
+
+    def test_same_process_refuses_every_windows_handle(self):
+        """Even a matching creation time and path cannot prove identity."""
+        identity = "2026-11-03T00:00:00.0000000Z"
+        with mock.patch.object(process_table, "is_windows", return_value=True):
+            with mock.patch.object(
+                process_table, "liveness", return_value=process_table.ALIVE
+            ):
+                with mock.patch.object(
+                    process_table, "process_start", return_value=identity
+                ):
+                    with mock.patch.object(
+                        process_table, "executable_path", return_value="C:\\x.exe"
+                    ):
+                        handle = recorded(
+                            exe="C:\\x.exe",
+                            start=identity,
+                            boot=process_table.UNKNOWN_START,
+                        )
+                        self.assertFalse(same_process(handle, PID))
 
 
 if __name__ == "__main__":

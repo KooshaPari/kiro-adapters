@@ -15,5 +15,8 @@ ALIVE = "alive"
 GONE = "gone"
 UNKNOWN = "unknown"
 
-# What a start identity looks like when the platform will not say.
+# What a start identity looks like when the platform will not say. This is a
+# refusal, not a value: it must never be compared against another identity
+# (two "unknown" strings are not the same process) and must never be
+# presented as a verified identity.
 UNKNOWN_START = "unknown"
