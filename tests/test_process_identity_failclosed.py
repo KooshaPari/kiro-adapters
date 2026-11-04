@@ -129,6 +129,13 @@ class PidMatchTests(unittest.TestCase):
         with IdentityProbe():
             self.assertTrue(same_process(recorded(pid=str(PID)), PID))
 
+    def test_a_unicode_digit_pid_is_refused_without_raising(self):
+        # ``"\u00b2".isdigit()`` is True but ``int("\u00b2")`` raises
+        # ValueError. A refusal must never escape as an exception.
+        with IdentityProbe():
+            self.assertFalse(same_process(recorded(pid="\u00b2"), PID))
+            self.assertFalse(same_process(recorded(pid="\u0660\u0661"), PID))
+
 
 class StartPrecisionTests(unittest.TestCase):
     """A coarse one-second start time is not proof of identity."""

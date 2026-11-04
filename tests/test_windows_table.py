@@ -172,6 +172,66 @@ class BoundedCaptureTests(unittest.TestCase):
             spawned[0].poll(), "child process leaked after thread failure"
         )
 
+    def test_partial_thread_start_failure_does_not_raise_from_cleanup(self):
+        """The second ``start()`` failing must not make cleanup raise.
+
+        ``Thread.join`` raises RuntimeError on an *unstarted* thread. A stub
+        whose ``join`` is a no-op hides exactly that, so this stub reproduces
+        the real semantics: the first reader starts, the second does not, and
+        joining the unstarted one raises. The handler must still fail closed
+        instead of letting that RuntimeError escape.
+        """
+
+        class PartiallyStartingThread:
+            started = False
+
+            def __init__(self, index, registry, *args, **kwargs):
+                self.index = index
+                self.registry = registry
+
+            def start(self):
+                if self.index == 1:
+                    raise RuntimeError("can't start new thread")
+                self.started = True
+                self.registry.append(self)
+
+            def join(self, timeout=None):
+                if not self.started:
+                    raise RuntimeError("cannot join thread before it is started")
+
+            def is_alive(self):
+                return False
+
+        registry = []
+        counters = {"n": 0}
+        real_popen = wt.subprocess.Popen
+        spawned = []
+
+        def make_thread(*args, **kwargs):
+            index = counters["n"]
+            counters["n"] += 1
+            return PartiallyStartingThread(index, registry, *args, **kwargs)
+
+        def tracking_popen(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            spawned.append(proc)
+            return proc
+
+        with mock.patch.object(wt.threading, "Thread", make_thread):
+            with mock.patch.object(wt.subprocess, "Popen", tracking_popen):
+                out = wt._run_capture(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5,
+                )
+
+        # The point of the test: no RuntimeError escaped.
+        self.assertIsNone(out.returncode)
+        self.assertFalse(out.ok)
+        self.assertEqual(len(spawned), 1)
+        self.assertIsNotNone(
+            spawned[0].poll(), "child process leaked after partial thread failure"
+        )
+
 
 class TableReaderTests(unittest.TestCase):
     """``read_windows_table`` and ``windows_liveness`` fail closed."""

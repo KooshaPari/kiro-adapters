@@ -181,6 +181,7 @@ def _run_capture(
     collected: Dict[str, bytes] = {}
     overflow = threading.Event()
     threads = []
+    started = []
     timed_out = False
 
     def reader(name: str, stream, cap: int) -> None:
@@ -209,6 +210,7 @@ def _run_capture(
         ]
         for thread in threads:
             thread.start()
+            started.append(thread)
 
         deadline = time.monotonic() + max(timeout, 0.0)
         while True:
@@ -241,8 +243,14 @@ def _run_capture(
                 pass
         # The child is gone, so readers see EOF on their own; never call
         # ``pipe.close()`` here, it waits on the lock a live reader holds.
-        for thread in threads:
-            thread.join(_READER_JOIN_SECONDS)
+        # Only join threads that were actually started: ``join`` on an
+        # unstarted thread raises RuntimeError, which would escape this
+        # handler and mask the original failure (and any KeyboardInterrupt).
+        for thread in started:
+            try:
+                thread.join(_READER_JOIN_SECONDS)
+            except RuntimeError:  # pragma: no cover - defensive
+                pass
         if not isinstance(exc, Exception):
             raise
         return CaptureResult(None, "", "", False, False)

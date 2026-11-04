@@ -204,8 +204,13 @@ def _exact_pid(value) -> Optional[int]:
         return value if value > 0 else None
     if isinstance(value, str):
         text = value.strip()
-        if text.isdigit():
-            pid = int(text)
+        # ``str.isdigit`` accepts characters such as "²" that ``int`` rejects,
+        # so require ASCII digits too: a refusal must never raise.
+        if text.isascii() and text.isdigit():
+            try:
+                pid = int(text)
+            except ValueError:  # pragma: no cover - unreachable for ASCII digits
+                return None
             return pid if pid > 0 else None
     return None
 
