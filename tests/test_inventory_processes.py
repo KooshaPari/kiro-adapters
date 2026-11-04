@@ -276,18 +276,26 @@ class WindowsCimIdentityTests(unittest.TestCase):
 
         with mock.patch.object(process_table, "is_windows", return_value=True):
             with mock.patch.object(
+                process_table, "windows_boot_epoch",
+                return_value="2026-11-03T00:00:00.0000000Z",
+            ), mock.patch.object(
                 process_table, "read_windows_process_identities", return_value={os.getpid(): ("2026-11-03T00:00:00+00:00", "C:\\\\x.exe")}
             ):
                 with mock.patch.object(process_table, "windows_liveness", return_value=process_table.ALIVE):
                     found = describe_many([os.getpid()])
         self.assertIn(os.getpid(), found)
-        self.assertEqual(found[os.getpid()].start_identity, "2026-11-03T00:00:00+00:00")
+        self.assertEqual(
+            found[os.getpid()].start_identity,
+            process_table.WINDOWS_START_PREFIX + "2026-11-03T00:00:00+00:00",
+        )
 
     def test_pid_reuse_is_rejected_on_windows(self):
         from kiro_adapters.inventory import process_table
 
         with mock.patch.object(process_table, "is_windows", return_value=True):
             with mock.patch.object(
+                process_table, "windows_boot_epoch", return_value=None
+            ), mock.patch.object(
                 process_table, "read_windows_process_identities", return_value={os.getpid(): ("NEW", "C:\\\\x.exe")}
             ):
                 with mock.patch.object(process_table, "windows_liveness", return_value=process_table.ALIVE):

@@ -53,6 +53,7 @@ from ._windows_table import (  # noqa: F401  (re-exported public surface)
     windows_liveness,
     windows_table,
 )
+from ._windows_boot import windows_boot_epoch
 
 # A process table read costs about a second on a busy host, and the inventory
 # asks for it repeatedly while walking thousands of session records. The
@@ -69,7 +70,13 @@ _SCAN_CACHE_TTL = 2.0
 # (including a bare ``ps -o lstart=`` string and :data:`UNKNOWN_START`) is
 # coarse or unknown and must be refused by the policy layer in
 # :mod:`.processes`.
-PRECISE_START_PREFIXES = ("proc-stat:", "proc-bsdinfo:")
+# Windows start identities are the CIM process creation time, which has
+# subsecond resolution. The prefix keeps them distinguishable from a coarse
+# ``ps`` string and lets :func:`is_precise_start` accept them without relaxing
+# the rule for any other platform.
+WINDOWS_START_PREFIX = "cim-creation:"
+
+PRECISE_START_PREFIXES = ("proc-stat:", "proc-bsdinfo:", WINDOWS_START_PREFIX)
 
 # A coarse identity is kept only so it can be displayed; the prefix prevents
 # it from ever being mistaken for a precise one.
@@ -103,17 +110,15 @@ def boot_id() -> str:
     original without this.
     """
     if is_windows():
-        # There is no cheap, stable, per-boot marker this module can read on
-        # Windows. The obvious substitute - the creation time of the *current*
-        # process - is not a boot id at all: it changes on every invocation of
-        # this program, so two runs in the same boot would disagree and every
-        # remembered identity would look like it came from before a reboot.
-        # A fabricated stable-looking value is worse than an honest refusal,
-        # so report that the boot identity is unknown and let callers fail
-        # closed. A genuine marker (for example the CIM creation time of the
-        # kernel process) may be added later, but only once it can be read
-        # safely and proven stable.
-        return UNKNOWN_START
+        # ``LastBootUpTime`` is a real per-boot marker: constant for the whole
+        # boot and different after a reboot. It is read once per process run
+        # through the bounded capture path. When it cannot be read, say so;
+        # never substitute the current process's creation time, which changes
+        # every run and would make two handles from one boot disagree.
+        epoch = windows_boot_epoch()
+        if not epoch:
+            return UNKNOWN_START
+        return "cim-boot:" + epoch
     system = platform.system()
     if system == "Linux":
         try:
@@ -172,7 +177,9 @@ def process_start(pid: int) -> str:
         creation = identity[0] if isinstance(identity, tuple) else None
         if not isinstance(creation, str) or not creation.strip():
             return UNKNOWN_START
-        return creation.strip()
+        # Mark the resolution explicitly so the policy layer can tell this
+        # subsecond CIM timestamp from coarse ``ps`` text.
+        return WINDOWS_START_PREFIX + creation.strip()
     precise = precise_start(pid)
     if precise is not None:
         return precise

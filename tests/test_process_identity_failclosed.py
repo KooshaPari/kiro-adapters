@@ -220,9 +220,11 @@ class UnknownIdentityTests(unittest.TestCase):
 class WindowsBootIdentityTests(unittest.TestCase):
     """Windows must not invent a boot id from the current process."""
 
-    def test_windows_boot_id_is_unknown(self):
+    def test_windows_boot_id_is_unknown_when_cim_is_unavailable(self):
         with mock.patch.object(process_table, "is_windows", return_value=True):
             with mock.patch.object(
+                process_table, "windows_boot_epoch", return_value=None
+            ), mock.patch.object(
                 process_table, "process_start", side_effect=AssertionError(
                     "a per-process start time must not stand in for a boot id"
                 )

@@ -158,7 +158,9 @@ def describe_many(pids: Iterable[int]) -> Dict[int, ProcessInstance]:
                 continue
             bound[pid] = ProcessInstance(
                 pid=int(pid),
-                start_identity=creation.strip(),
+                start_identity=(
+                    process_table.WINDOWS_START_PREFIX + creation.strip()
+                ),
                 boot_id=shared_boot,
                 executable_path=executable.strip(),
             )
@@ -234,9 +236,10 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     path on either side fails closed rather than degrading to "the pid and
     the second happened to agree".
 
-    Windows is always refused today: its boot identity is
-    :data:`process_table.UNKNOWN_START`, so nothing can be placed on a boot
-    timeline even when the CIM creation time and executable match.
+    On Windows every component must be genuinely available: a real CIM boot
+    epoch, the exact pid, the CIM creation time (prefixed as subsecond), and
+    the executable path. When the boot epoch cannot be read, the boot check
+    refuses, so a creation time alone can never stand in for an identity.
     """
     if recorded is None:
         return False
@@ -274,6 +277,14 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
         # The current probe degraded to coarse text; that is not proof.
         return False
     if now_start != recorded.start_identity:
+        return False
+    if is_windows() and not (
+        recorded.start_identity.startswith(process_table.WINDOWS_START_PREFIX)
+        and now_start.startswith(process_table.WINDOWS_START_PREFIX)
+    ):
+        # On Windows only a CIM creation timestamp is a comparable start
+        # identity. A differently-shaped value cannot prove a match even if
+        # the strings happen to be equal.
         return False
     # A second-resolution start time plus a pid is not on its own enough to
     # prove identity (a pid recycled inside the same second would match). The
