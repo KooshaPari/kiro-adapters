@@ -1,0 +1,68 @@
+#!/bin/bash
+# kiro-adapter-mcp — stdio MCP server for the kiro-adapters package.
+#
+# Points the interpreter at the repo's src/ tree directly (no install step) and
+# uses -E -s so an inherited PYTHONPATH / user site cannot shadow the package.
+# Override the repository with KIRO_ADAPTER_REPO, the interpreter with
+# KIRO_ADAPTER_PYTHON.
+#
+# WHY THE HOME FALLBACK EXISTS (do not remove it)
+# -----------------------------------------------
+# Kiro Crew's codex ACP backend spawns MCP stdio children with an EMPTY
+# environment (providers/mirrors/codex.py: "its child processes inherit no
+# environment"; acp/session_mcp.py emits env: [] for a server that carries none).
+# Under `set -u`, `$HOME` is then an unbound variable and the shell exits before
+# Python is ever reached:
+#
+#     kiro-adapter-mcp: line 9: HOME: unbound variable
+#
+# That failure is invisible from the Kiro Crew side - the server simply never
+# appears in the session's tool list, with no error surfaced to the user. So the
+# default repository path must not depend on HOME. It is derived from this
+# script's own location (~/bin/<name> -> ~), with an explicit fallback.
+set -euo pipefail
+
+# An empty environment also means no PATH; exec'ing python still works by
+# absolute path, but anything the server shells out to would not.
+PATH="${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+export PATH
+
+_self_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+_home_guess=$(dirname -- "$_self_dir")
+
+# Try candidates in order and keep the first that actually contains the module.
+# A single guess is what broke here: when the script is not in ~/bin the guess is
+# wrong, and the failure looks identical to the HOME failure above. Trying them
+# and naming the ones tried makes the next diagnosis cheap.
+_candidates=(
+  "${KIRO_ADAPTER_REPO:-}"
+  "${HOME:-}/CodeProjects/Phenotype/repos/kiro-adapters"
+  "${_home_guess}/CodeProjects/Phenotype/repos/kiro-adapters"
+  "/Users/kooshapari/CodeProjects/Phenotype/repos/kiro-adapters"
+)
+
+REPO=""
+for _cand in "${_candidates[@]}"; do
+  if [ -n "$_cand" ] && [ -f "$_cand/src/kiro_adapters/mcp_server.py" ]; then
+    REPO="$_cand"
+    break
+  fi
+done
+
+if [ -z "$REPO" ]; then
+  echo "kiro-adapter-mcp: mcp_server.py not found. Tried:" >&2
+  for _cand in "${_candidates[@]}"; do
+    [ -n "$_cand" ] && echo "  $_cand/src/kiro_adapters" >&2
+  done
+  echo "Set KIRO_ADAPTER_REPO to the kiro-adapters checkout." >&2
+  exit 1
+fi
+
+PY="${KIRO_ADAPTER_PYTHON:-/opt/homebrew/bin/python3.12}"
+
+exec "$PY" -E -s -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from kiro_adapters.mcp_server import main
+raise SystemExit(main(sys.argv[2:]))
+' "$REPO/src" "$@"
