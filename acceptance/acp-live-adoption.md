@@ -43,6 +43,14 @@ before `kill -TERM`.
 
 ## Defect found: the CLI entry point drops all of its own flags
 
+> **RESOLVED 2026-11-04**, commit `6800b9c`. `main` now defaults `argv` to
+> `sys.argv[1:]`, which covers both the console-script entry point and
+> `python -m`. The strict-xfail regression test became a plain assertion and
+> passes. The row above is left as `FAILED` because that is what this run
+> observed; the fix is newer than the evidence, so the flags have **not** been
+> re-exercised in a live adoption. Treat "flags work live" as UNKNOWN until a
+> rerun proves it, and note the env overrides remain the only *proven* path.
+
 `src/jcode_bridge/acp_shim/__main__.py` ends with:
 
 ```python
