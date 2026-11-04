@@ -269,9 +269,10 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
         check.check(result_id == session_id,
                     "session/load forwarded verbatim, exactly once",
                     "forwarded=%r" % (result_id,))
-        check.check([m for m, _ in forwards] == ["session/load"],
+        adoption_forwards = [m for m, _ in forwards if m != "initialize"]
+        check.check(adoption_forwards == ["session/load"],
                     "session/load is the only adoption call forwarded",
-                    str([m for m, _ in forwards]))
+                    str(adoption_forwards))
         check.check(_adoption_calls(upstream_ok) == ["session/load"],
                     "session/new/close were never forwarded",
                     str(upstream_ok.calls))
