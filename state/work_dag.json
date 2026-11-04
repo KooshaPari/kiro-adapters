@@ -200,7 +200,7 @@
         "commit ffe7f56",
         "commit edcc513"
       ],
-      "notes": "Cross-host end-to-end integration is still not proven. 2026-11-04 evidence narrows it precisely: a REAL Kiro Crew agent turn dispatched tool kiro-inventory/agent_sources (structured row in ~/.kiro/crew/sessions/dashboard_chat-2-1793781242.jsonl with meta.input, meta.done=true) but returned \"Error: MCP server 'kiro-inventory' not connected\", and a later turn reported \"Connected MCP servers: 0 (0 tools)\". So DISPATCH is observed and EXECUTION failed. Cause identified in edcc513: agent sessions run the codex ACP backend and Crew composes session/new.mcpServers only from ~/.kiro/agents/<name>.json (acp/session_mcp.py:1-9,:368,:1472); the previously edited ~/.kiro/crew/mcp.json is dashboard projection read by nothing on the session path, and kiro-inventory appears in 0 of 17 agent specs. Also unproven: why kirocrew-core/cron also connect 0 tools."
+      "notes": "Cross-host end-to-end integration is still not proven. 2026-11-04 evidence narrows it precisely: a REAL Kiro Crew agent turn dispatched tool kiro-inventory/agent_sources (structured row in ~/.kiro/crew/sessions/dashboard_chat-2-1793781242.jsonl with meta.input, meta.done=true) but returned \"Error: MCP server 'kiro-inventory' not connected\", and a later turn reported \"Connected MCP servers: 0 (0 tools)\". So DISPATCH is observed and EXECUTION failed. Cause identified in edcc513: agent sessions run the codex ACP backend and Crew composes session/new.mcpServers only from ~/.kiro/agents/<name>.json (acp/session_mcp.py:1-9,:368,:1472); the previously edited ~/.kiro/crew/mcp.json is dashboard projection read by nothing on the session path, and kiro-inventory appears in 0 of 17 agent specs. Also unproven: why kirocrew-core/cron also connect 0 tools. 2026-11-04 follow-up: the desktop is not the blocker. See P16 for the five measured findings and the one missing observation (session/new.mcpServers payload). Dispatch was observed once on the dashboard path; execution has never been observed on any path."
     },
     {
       "id": "P10",
@@ -318,12 +318,16 @@
       "m": 2,
       "p": 4,
       "pert": 2.2,
-      "status": "NOT_RUN",
+      "status": "UNKNOWN",
       "evidence": [
         "docs/mcp-connect-diagnosis.md",
-        "commit edcc513"
+        "docs/mcp-mount-predicate.md",
+        "docs/mcp-integration-verification.md",
+        "docs/mcp-integration-proof.md",
+        "docs/mcp-server-attestation-proof.md",
+        "commits edcc513, 887a79b, 5d167bd, 76e3dd0"
       ],
-      "notes": "Minimal described fix: add kiro-inventory to ~/.kiro/agents/kirocrew.json mcpServers using the jcode-bridge stdio shape, plus the '@kiro-inventory' tool reference if that convention is already used there. Specs are re-read per spawn, so no restart is needed. Not applied at the time of writing."
+      "notes": "Four verification attempts, all NOT PROVEN. Chain of findings, each measured: (1) ~/.kiro/crew/mcp.json is dashboard projection only - the session path never reads it (edcc513). (2) Crew's own composer DOES mount the entry: @kiro-inventory resolved and is absent from the unresolved list (docs/mcp-mount-predicate.md), so the absence is decided downstream, in the harness's own config merge. (3) The launcher died under the empty environment codex gives MCP children - 'HOME: unbound variable' - so the server never started and Crew surfaced nothing; fixed in 887a79b and verified under env -i. (4) The MCP set the agent actually reported (portal-bridge, workos-docs, node_repl, phinbox-mcp) matches ~/.codex/config.toml, so [mcp_servers.kiro-inventory] was added there (backup config.toml.bak-20261104T011421) and codex mcp list shows it enabled. (5) Still no call: a 153s turn ended with the model itself saying the server is not configured or connected, and the audit file never appeared. Instrument now in place: opt-in server-side attestation (5d167bd, KIRO_INVENTORY_AUDIT_LOG, one redacted line per call, 478 tests pass) plus that env registered in codex config (76e3dd0). A direct invocation writes {tool: agent_sources, ok: true, result_bytes: 527}, so the instrument works - the turn never reaches the server. MISSING OBSERVATION, and the next step: capture the actual session/new.mcpServers payload for one turn. Without it, whether the array omits the entry or the transport drops it is UNKNOWN. Do not claim integration on configuration."
     }
   ],
   "carried_unknowns": [
@@ -333,7 +337,8 @@
     "Why kirocrew-core and cron also report 0 connected MCP tools, given they are neither withheld nor unmounted.",
     "Whether agent.sandbox=auto with no available backend also blocks session spawn.",
     "Windows identity composition is validated only by synthetic tests; the boot epoch and CIM row have been confirmed on the real host, but the composed match has not been exercised there.",
-    "Whether the shipped CLI flags now work in a live adoption: the fix (6800b9c) postdates the live run, so only the environment overrides are proven."
+    "Whether the shipped CLI flags now work in a live adoption: the fix (6800b9c) postdates the live run, so only the environment overrides are proven.",
+    "The actual session/new.mcpServers payload for one turn: without it, omission-by-array vs drop-by-transport is undecidable."
   ],
   "measured_host_state": {
     "gateway_service": "dev.kirocrew.gateway (launchd), healthy",
