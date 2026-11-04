@@ -27,6 +27,7 @@ from jcode_bridge.acp_shim import (  # noqa: E402
     MODE_READ_ONLY,
     PARSE_ERROR,
     SHIM_PRECONDITION_FAILED,
+    SHIM_PROMPT_FORWARDING_DISABLED,
     AdoptionShim,
     BlockedUpstreamCall,
     InProcessUpstream,
@@ -114,6 +115,8 @@ class TestCapabilities(ShimCase):
         meta = caps["_meta"]["jcode.acpShim"]
         self.assertFalse(meta["spawnsDaemon"])
         self.assertFalse(meta["forwardsSessionClose"])
+        self.assertTrue(meta["readOnly"])
+        self.assertFalse(meta["promptForwarding"])
         self.assertEqual(result["protocolVersion"], 1)
 
     def test_initialize_preserves_upstream_capabilities(self) -> None:
@@ -232,6 +235,92 @@ class TestNeverClosesOrLeaks(ShimCase):
         rendered = json.dumps(payload)
         self.assertNotIn(FAKE_JWT, rendered)
         self.assertIn("<redacted>", rendered)
+
+
+class TestPromptForwarding(ShimCase):
+    """The shim must not offer a capability it cannot enforce.
+
+    Adoption is read-only. The daemon's tool authority is not bridged, so a
+    forwarded prompt would run with permissions this shim never checked.
+    """
+
+    def _adopted(self, **overrides: Any):
+        self.write_session()
+        self.listen()
+
+        def handler(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+            if method == "session/load":
+                return {"sessionId": params["sessionId"]}
+            if method == "session/prompt":
+                return {"stopReason": "end_turn"}
+            return {}
+
+        shim, upstream = self.shim(handler=handler, **overrides)
+        adopted = self.call(shim, "session/load", {"sessionId": "sess-001"})
+        self.assertNotIn("error", adopted)
+        return shim, upstream
+
+    def test_prompt_refused_by_default_with_structured_error(self) -> None:
+        shim, upstream = self._adopted()
+        payload = self.call(
+            shim, "session/prompt", {"sessionId": "sess-001", "prompt": []}
+        )
+        error = payload["error"]
+        self.assertEqual(error["code"], SHIM_PROMPT_FORWARDING_DISABLED)
+        self.assertEqual(error["data"]["precondition"], "prompt_forwarding_disabled")
+        self.assertEqual(error["data"]["adoptionMode"], MODE_READ_ONLY)
+        self.assertFalse(error["data"]["promptForwarding"])
+        self.assertFalse(error["data"]["willSpawnDaemon"])
+        self.assertEqual(error["data"]["optIn"], "--allow-prompt-forwarding")
+        meta = error["data"]["_meta"]["jcode"]["acpShim"]
+        self.assertTrue(meta["readOnly"])
+        self.assertFalse(meta["promptForwarding"])
+        self.assertFalse(meta["upstreamToolAuthorityEnforced"])
+        self.assertNotIn("session/prompt", upstream.calls)
+
+    def test_a_write_requesting_prompt_is_never_forwarded(self) -> None:
+        shim, upstream = self._adopted()
+        payload = self.call(
+            shim,
+            "session/prompt",
+            {
+                "sessionId": "sess-001",
+                "prompt": [{"type": "text", "text": "write /etc/passwd"}],
+            },
+        )
+        self.assertEqual(payload["error"]["code"], SHIM_PROMPT_FORWARDING_DISABLED)
+        self.assertEqual(upstream.calls, ["session/load"])
+
+    def test_prompt_forwarded_only_with_the_explicit_flag(self) -> None:
+        shim, upstream = self._adopted(allow_prompt_forwarding=True)
+        payload = self.call(
+            shim, "session/prompt", {"sessionId": "sess-001", "prompt": []}
+        )
+        self.assertEqual(payload["result"]["stopReason"], "end_turn")
+        self.assertIn("session/prompt", upstream.calls)
+        self.assertNotIn("session/new", upstream.calls)
+        self.assertNotIn("session/close", upstream.calls)
+
+    def test_initialize_advertises_the_opt_in_honestly(self) -> None:
+        shim, _ = self.shim()
+        meta = self.call(shim, "initialize", {})["result"]["agentCapabilities"][
+            "_meta"
+        ]["jcode.acpShim"]
+        self.assertTrue(meta["readOnly"])
+        self.assertFalse(meta["promptForwarding"])
+
+        opting_in, _ = self.shim(allow_prompt_forwarding=True)
+        opt_meta = self.call(opting_in, "initialize", {})["result"][
+            "agentCapabilities"
+        ]["_meta"]["jcode.acpShim"]
+        self.assertTrue(opt_meta["promptForwarding"])
+        self.assertFalse(opt_meta["readOnly"])
+
+    def test_cancel_stays_local_while_prompt_forwarding_is_disabled(self) -> None:
+        shim, upstream = self._adopted()
+        payload = self.call(shim, "session/cancel", {"sessionId": "sess-001"})
+        self.assertFalse(payload["result"]["cancelled"])
+        self.assertNotIn("session/cancel", upstream.calls)
 
 
 class TestModeHandling(ShimCase):

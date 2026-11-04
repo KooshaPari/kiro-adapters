@@ -9,7 +9,11 @@ Contract, in order of importance:
    indirectly by forwarding a load without that evidence.
 3. Never send ``session/close`` upstream, and never send ``session/new``.
 4. Advertise ``loadSession: true`` and a ``read-only`` mode.
-5. Never log or echo a transcript body or a credential.
+5. Refuse ``session/prompt`` locally unless the operator opted in with
+   ``allow_prompt_forwarding``. The shim cannot enforce the daemon's own tool
+   authority, so forwarding a prompt would silently grant it. Adoption without
+   prompts is the honest default.
+6. Never log or echo a transcript body or a credential.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from .protocol import (
     INTERNAL_ERROR,
     METHOD_NOT_FOUND,
     SHIM_PRECONDITION_FAILED,
+    SHIM_PROMPT_FORWARDING_DISABLED,
     SHIM_UPSTREAM_UNAVAILABLE,
     BlockedUpstreamCall,
     RpcError,
@@ -51,6 +56,7 @@ class ShimConfig:
     socket_paths: Tuple[str, ...] = ()
     mode: str = MODE_READ_ONLY
     forward_mode: bool = False
+    allow_prompt_forwarding: bool = False
     client_name: str = "kirocrew-acp-adoption-shim"
     upstream_timeout: float = 60.0
 
@@ -171,6 +177,7 @@ class AdoptionShim:
             upstream_result,
             mode=self._mode,
             upstream_state=state,
+            prompt_forwarding=self.config.allow_prompt_forwarding,
         )
         merged.pop("jsonrpc", None)
         return merged
@@ -222,12 +229,40 @@ class AdoptionShim:
 
     def _session_prompt(self, params: Dict[str, Any]) -> Dict[str, Any]:
         self._require_adopted(params)
+        if not self.config.allow_prompt_forwarding:
+            raise RpcError(
+                SHIM_PROMPT_FORWARDING_DISABLED,
+                "the adoption shim is read-only and does not forward "
+                "session/prompt; the upstream daemon's tool authority is not "
+                "enforced by this shim",
+                {
+                    "precondition": "prompt_forwarding_disabled",
+                    "adoptionMode": MODE_READ_ONLY,
+                    "promptForwarding": False,
+                    "willSpawnDaemon": False,
+                    "optIn": "--allow-prompt-forwarding",
+                    "_meta": {
+                        "jcode": {
+                            "acpShim": {
+                                "readOnly": True,
+                                "promptForwarding": False,
+                                "promptForwardingEnforced": True,
+                                "upstreamToolAuthorityEnforced": False,
+                            }
+                        }
+                    },
+                },
+            )
         upstream = self._ensure_upstream()
         return upstream.request("session/prompt", dict(params))
 
     def _session_cancel(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if self._adopted is None:
             return {}
+        if not self.config.allow_prompt_forwarding:
+            # No prompt can be in flight through this shim, so there is nothing
+            # upstream to cancel. Stay local rather than touching the daemon.
+            return {"cancelled": False, "reason": "no_prompt_forwarded"}
         upstream = self._ensure_upstream()
         return upstream.request("session/cancel", dict(params))
 

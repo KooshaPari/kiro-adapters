@@ -11,6 +11,11 @@ and changes exactly two things, both deliberate:
 
 The shim also adds ``modes`` with a single ``read-only`` entry and
 ``currentModeId``, which is what KiroCrew's codex slot gate checks.
+
+Because the shim cannot enforce the daemon's tool allowlist, prompt forwarding
+is disabled by default and advertised in ``_meta``. ``readOnly`` is only true
+while that forwarding stays disabled; enabling it is an explicit operator
+opt-in and the advertisement must say so.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ def _apply_contract(
     capabilities: Dict[str, Any],
     mode: str,
     upstream_state: str,
+    prompt_forwarding: bool,
 ) -> None:
     capabilities["loadSession"] = True
 
@@ -78,7 +84,9 @@ def _apply_contract(
             "name": SHIM_NAME,
             "version": SHIM_VERSION,
             "upstreamState": upstream_state,
-            "readOnly": True,
+            "readOnly": not prompt_forwarding,
+            "promptForwarding": prompt_forwarding,
+            "promptForwardingOptIn": "--allow-prompt-forwarding",
             "spawnsDaemon": False,
             "forwardsSessionClose": False,
         }
@@ -91,10 +99,11 @@ def build_initialize_result(
     upstream_result: Optional[Dict[str, Any]] = None,
     mode: str = MODE_READ_ONLY,
     upstream_state: str = "unknown",
+    prompt_forwarding: bool = False,
 ) -> Dict[str, Any]:
     """Return the initialize result the shim sends to its client."""
     capabilities = _capabilities_from(upstream_result)
-    _apply_contract(capabilities, mode, upstream_state)
+    _apply_contract(capabilities, mode, upstream_state, prompt_forwarding)
 
     protocol_version = ACP_PROTOCOL_VERSION
     if isinstance(upstream_result, dict):

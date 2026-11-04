@@ -67,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also forward session/set_mode, degrading on upstream -32601.",
     )
     parser.add_argument(
+        "--allow-prompt-forwarding",
+        action="store_true",
+        help=(
+            "DANGEROUS: forward session/prompt upstream. The shim cannot enforce "
+            "the daemon's tool authority, so a forwarded prompt runs with the "
+            "daemon's own permissions. Off by default."
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=60.0,
@@ -109,6 +118,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         socket_paths=_split(args.socket),
         mode=args.mode,
         forward_mode=bool(args.forward_mode),
+        allow_prompt_forwarding=bool(args.allow_prompt_forwarding),
         upstream_timeout=args.timeout,
     )
     os.environ["JCODE_ACP_SHIM"] = "1"

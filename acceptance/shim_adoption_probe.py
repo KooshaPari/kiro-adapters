@@ -59,6 +59,7 @@ if SRC not in sys.path:
 from jcode_bridge.acp_shim import (  # noqa: E402
     MODE_READ_ONLY,
     SHIM_PRECONDITION_FAILED,
+    SHIM_PROMPT_FORWARDING_DISABLED,
     AdoptionShim,
     InProcessUpstream,
     ShimConfig,
@@ -229,6 +230,9 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
                 json.dumps(meta))
     check.check(caps.get("currentModeId") == MODE_READ_ONLY,
                 "shim advertises read-only mode", str(caps.get("currentModeId")))
+    check.check(meta.get("promptForwarding") is False,
+                "shim advertises prompt forwarding disabled",
+                json.dumps(meta))
     check.check("close" not in (caps.get("sessionCapabilities") or {}),
                 "shim does not advertise session/close")
 
@@ -278,6 +282,17 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
                     str(upstream_ok.calls))
         check.check(payload.get("result", {}).get("sessionId") == session_id,
                     "upstream result echoed the exact id")
+
+        # --- read-only posture survives a successful adoption ----------------
+        prompt_payload = _call(shim_ok, "session/prompt",
+                               {"sessionId": session_id, "prompt": []})
+        code, precond = _precondition(prompt_payload)
+        check.check(code == SHIM_PROMPT_FORWARDING_DISABLED
+                    and precond == "prompt_forwarding_disabled",
+                    "prompt is refused by default after adoption",
+                    "%s/%s" % (code, precond))
+        check.check(_adoption_calls(upstream_ok) == ["session/load"],
+                    "prompt never reached upstream", str(upstream_ok.calls))
 
         # --- the gate is still a gate after a success ----------------------
         payload = _call(shim_ok, "session/load",

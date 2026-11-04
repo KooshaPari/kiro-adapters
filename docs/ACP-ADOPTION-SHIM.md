@@ -49,6 +49,50 @@ flowchart LR
    shim speaks to `kcode acp` without a translation layer.
 2. Forwards `session/load` upstream, but only after two read-only checks pass.
 3. Advertises `loadSession: true` and a single `read-only` mode.
+4. Adopts the session for observation, but **does not forward
+   `session/prompt`** unless the operator opts in. Adoption and prompting are
+   separate decisions, because the shim cannot enforce the daemon's tool
+   authority.
+
+## What is actually enforced, and what is not
+
+The shim is one process between the client and an ACP front end. It can refuse
+methods; it cannot constrain what the upstream daemon does with a request it
+does receive. This section is deliberately blunt.
+
+### Enforced by the shim
+
+| Enforced | How |
+|---|---|
+| `session/new` is never sent | Blocked in `Upstream.guard`, so every transport inherits it. |
+| `session/close` is never sent | Same guard; `session/close` answers locally with `{"closed": false, "detached": true}`. |
+| Adoption needs a real session file and a live socket | `gate.assess` runs both probes and fails closed with `-32010`. |
+| No daemon is ever spawned | The shim never calls `ensure_daemon`; the probe only connects and closes. |
+| Non-`read-only` modes are refused | `session/set_mode` rejects anything but `read-only` locally. |
+| Write-enabling config options are refused | `writes`, `allow_writes`, `write`, `approval`, `auto_approve` are rejected locally. |
+| `session/prompt` is refused by default | `-32012 SHIM_PROMPT_FORWARDING_DISABLED` with a structured `data` payload, before any upstream call. |
+| `session/cancel` does not reach the daemon while prompting is disabled | Answered locally: no prompt can be in flight through the shim. |
+
+### NOT enforced by the shim
+
+| Not enforced | Why |
+|---|---|
+| The daemon's tool allowlist / file-write authority | The shim has no visibility into upstream tool execution. If a prompt is forwarded, the daemon applies its own permissions, not the shim's advertisement. |
+| The KiroCrew permission model | KiroCrew derives a static narrowed tool allowlist and uses `session/request_permission`; jcode arbitrates a live interaction lease via `require_interaction_ownership`. These are different models; this shim does not bridge or translate them (see `KAS-VS-JCODE.md`). |
+| Upstream `session/set_mode` | The fork answers `-32601 METHOD_NOT_FOUND`, so `--forward-mode` degrades to a local contract and the daemon mode is unchanged. |
+
+`_meta.jcode.acpShim` in `initialize` advertises `readOnly`,
+`promptForwarding` and `promptForwardingOptIn` so a client can see the posture
+instead of inferring it. `readOnly` is `true` only while prompt forwarding is
+disabled.
+
+### The explicit opt-in
+
+`--allow-prompt-forwarding` turns prompt forwarding on. It is **off by
+default**, loudly named, and turning it on makes the read-only claim false:
+the shim will then forward prompts with the upstream daemon's own authority.
+The `_meta` advertisement flips `readOnly` to `false` and
+`promptForwarding` to `true` so the client is told.
 
 ## What it refuses to do
 
@@ -59,6 +103,7 @@ flowchart LR
 | `session/close` | Upstream, `session/close` cancels a running prompt and stops the event pump (`src/cli/acp.rs:653-677`). It is not a detach. Detach is dropping the connection. |
 | Write-capable `session/set_mode` | The shim advertises `read-only` and nothing else. Selecting any other mode is refused locally. |
 | Write config options | Anything named `write`, `writes`, `allow_writes`, `approval` or `auto_approve` is refused. |
+| `session/prompt` (default) | The shim cannot enforce the daemon's tool authority, so forwarding is refused with `-32012` unless `--allow-prompt-forwarding` is set. |
 
 `sessionCapabilities.close` is **dropped** from the advertised capabilities.
 The shim must not advertise what it will not do.
@@ -97,6 +142,7 @@ jcode-acp-adopt --upstream kcode acp \
 | `--socket PATH` | Daemon socket to probe. Repeatable. Never created. `JCODE_ACP_SOCKET` overrides the list. |
 | `--mode MODE` | Only `read-only` is accepted. |
 | `--forward-mode` | Also forward `session/set_mode`, degrading on upstream `-32601`. |
+| `--allow-prompt-forwarding` | **DANGEROUS.** Forward `session/prompt` upstream. Off by default; the forwarded prompt runs with the daemon's own permissions. |
 | `--timeout SECONDS` | Upstream request timeout. |
 
 The shim also exports `JCODE_ACP_SHIM=1` into its own environment so a
@@ -120,6 +166,7 @@ never goes through the command line.
 |---|---|
 | `-32010` `SHIM_PRECONDITION_FAILED` | A documented precondition was not met (no session file, or no live daemon socket). |
 | `-32011` `SHIM_UPSTREAM_UNAVAILABLE` | The upstream ACP link is gone or timed out. |
+| `-32012` `SHIM_PROMPT_FORWARDING_DISABLED` | Prompt forwarding is off (the default). `data.precondition = prompt_forwarding_disabled`; `data.willSpawnDaemon = false`. |
 
 Standard JSON-RPC codes (`-32700`, `-32600`, `-32601`, `-32602`, `-32603`) are
 used for protocol faults.

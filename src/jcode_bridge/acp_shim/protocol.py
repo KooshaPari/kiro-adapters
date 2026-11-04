@@ -24,6 +24,9 @@ INTERNAL_ERROR = -32603
 # precondition cannot be met, or the upstream link is gone.
 SHIM_PRECONDITION_FAILED = -32010
 SHIM_UPSTREAM_UNAVAILABLE = -32011
+# The shim adopted the session read-only and cannot enforce the daemon's tool
+# authority, so prompt forwarding is off unless the operator opted in.
+SHIM_PROMPT_FORWARDING_DISABLED = -32012
 
 MAX_LINE_CHARS = 8 * 1024 * 1024
 
@@ -147,4 +150,5 @@ def error_codes() -> List[int]:
         INTERNAL_ERROR,
         SHIM_PRECONDITION_FAILED,
         SHIM_UPSTREAM_UNAVAILABLE,
+        SHIM_PROMPT_FORWARDING_DISABLED,
     ]
