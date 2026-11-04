@@ -191,15 +191,35 @@ def liveness_many(pids: Iterable[int]) -> Dict[int, str]:
 def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
     """True when ``current_pid`` is provably the process ``recorded`` saw.
 
-    Two ways to fail, both refusals:
+    Every failure is a refusal, never a guess:
 
     * the pid is gone, or could not be checked -> not the same process
     * the pid is alive but its start time differs -> a *different* process
       recycled onto the same number
+    * either the recorded or the current boot identity is unknown -> not
+      proven, so not the same process
+    * the executable path cannot be read on either side, or the two paths
+      differ -> not proven, so not the same process
+
+    The executable comparison is not a nicety. POSIX ``ps -o lstart=`` reports
+    a start time only to the second, so a pid recycled within the same second
+    as the original process carries the same start text. The executable path
+    is the second, independent witness that separates the two. What cannot be
+    witnessed cannot be asserted, so an unreadable path fails closed rather
+    than degrading to "the pid and the second happened to agree".
     """
     if recorded is None:
         return False
-    if recorded.boot_id != boot_id():
+    recorded_boot = recorded.boot_id
+    current_boot = boot_id()
+    if recorded_boot == process_table.UNKNOWN_START:
+        # The record cannot be placed on a boot timeline at all.
+        return False
+    if current_boot == process_table.UNKNOWN_START:
+        # This host cannot say which boot it is on, so no handle can be
+        # proven to belong to it.
+        return False
+    if recorded_boot != current_boot:
         # The host rebooted. Nothing from before the reboot is the same.
         return False
     if liveness(current_pid) != ALIVE:
@@ -213,14 +233,18 @@ def same_process(recorded: Optional[ProcessInstance], current_pid: int) -> bool:
         return False
     if now_start != recorded.start_identity:
         return False
-    # When both sides recorded an executable path, it must agree too:
-    # a recycled pid can keep the same creation time only in adversarial or
-    # buggy probes, but an executable change is a definitive mismatch.
+    # A second-resolution start time plus a pid is not on its own enough to
+    # prove identity (a pid recycled inside the same second would match). The
+    # executable path is required on both sides: absent on the record, or
+    # unreadable now, means the identity is unproven and this returns False.
     recorded_exe = getattr(recorded, "executable_path", None)
-    if recorded_exe:
-        now_exe = process_table.executable_path(current_pid)
-        if now_exe and now_exe != recorded_exe:
-            return False
+    if not recorded_exe:
+        return False
+    now_exe = process_table.executable_path(current_pid)
+    if not now_exe:
+        return False
+    if now_exe != recorded_exe:
+        return False
     return True
 
 

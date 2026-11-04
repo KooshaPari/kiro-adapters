@@ -87,6 +87,18 @@ def boot_id() -> str:
     recycled pid on the other side of a reboot is indistinguishable from the
     original without this.
     """
+    if is_windows():
+        # There is no cheap, stable, per-boot marker this module can read on
+        # Windows. The obvious substitute - the creation time of the *current*
+        # process - is not a boot id at all: it changes on every invocation of
+        # this program, so two runs in the same boot would disagree and every
+        # remembered identity would look like it came from before a reboot.
+        # A fabricated stable-looking value is worse than an honest refusal,
+        # so report that the boot identity is unknown and let callers fail
+        # closed. A genuine marker (for example the CIM creation time of the
+        # kernel process) may be added later, but only once it can be read
+        # safely and proven stable.
+        return UNKNOWN_START
     system = platform.system()
     if system == "Linux":
         try:
@@ -369,4 +381,3 @@ def _describe_own(pid: int) -> Optional[ProcessInstance]:
     from .processes import describe  # local import: processes owns the policy
 
     return describe(pid)
-
