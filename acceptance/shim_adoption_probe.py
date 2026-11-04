@@ -185,6 +185,11 @@ def _precondition(payload: Dict[str, Any]) -> Tuple[Optional[int], Optional[str]
     return error.get("code"), (error.get("data") or {}).get("precondition")
 
 
+def _adoption_calls(upstream) -> List[str]:
+    """Upstream methods other than initialize: the adoption surface only."""
+    return [method for method in upstream.calls if method != "initialize"]
+
+
 def run(session_id: str, root: Path, audit: Audit) -> int:
     check = Checker()
     sessions = root / "sessions"
@@ -231,7 +236,8 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
     code, precond = _precondition(payload)
     check.check(code == SHIM_PRECONDITION_FAILED and precond == "daemon_not_running",
                 "no socket -> daemon_not_running", "%s/%s" % (code, precond))
-    check.check(upstream.calls == [], "no socket -> upstream untouched",
+    check.check(_adoption_calls(upstream) == [],
+                "no socket -> no adoption call reached upstream",
                 str(upstream.calls))
 
     # --- negative: unknown id ----------------------------------------------
@@ -264,10 +270,11 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
                     "session/load forwarded verbatim, exactly once",
                     "forwarded=%r" % (result_id,))
         check.check([m for m, _ in forwards] == ["session/load"],
-                    "no other upstream method was called",
+                    "session/load is the only adoption call forwarded",
                     str([m for m, _ in forwards]))
-        check.check("session/new" not in upstream_ok.calls,
-                    "session/new was never forwarded", str(upstream_ok.calls))
+        check.check(_adoption_calls(upstream_ok) == ["session/load"],
+                    "session/new/close were never forwarded",
+                    str(upstream_ok.calls))
         check.check(payload.get("result", {}).get("sessionId") == session_id,
                     "upstream result echoed the exact id")
 
@@ -281,7 +288,7 @@ def run(session_id: str, root: Path, audit: Audit) -> int:
         close_payload = _call(shim_ok, "session/close", {"sessionId": session_id})
         check.check(close_payload.get("result", {}).get("closed") is False,
                     "session/close is local, not forwarded")
-        check.check("session/close" not in upstream_ok.calls,
+        check.check(_adoption_calls(upstream_ok) == ["session/load"],
                     "session/close never reached upstream", str(upstream_ok.calls))
     finally:
         listener.close()
