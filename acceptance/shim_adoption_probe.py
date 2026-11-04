@@ -1,257 +1,365 @@
-"""Prove the shim's ADOPTION path, not just its fail-closed path.
+"""Synthetic, isolated acceptance probe for the shim's ADOPTION path.
 
-The fail-closed cases are already covered (`shim_live_probe.py`). This script
-covers the other half: a real jcode ACP process creates a session and a live
-daemon socket, and then the shim adopts that session over `session/load`.
+Safety contract
+---------------
+This probe is deliberately synthetic. It does NOT start a jcode/KCode process,
+does NOT connect to any socket it did not create, and does NOT read or write a
+real ``~/.jcode`` / ``~/.kcode`` session store. It requires:
 
-Sequence:
-  1. Start `kcode --no-selfdev acp` as the "operator's" session and keep it open.
-  2. `initialize` + `session/new` on it. This is what creates the daemon socket
-     and writes `<id>.json` into the session store. The shim will not do this.
-  3. Locate the live daemon socket by probing the candidate paths.
-  4. Start the shim pointed at that socket and that session store.
-  5. `initialize` then `session/load` for the session created in step 2.
-     Success means the shim attached, without ever spawning a daemon.
+  * an EXPLICIT session id on the command line (never "the newest session");
+  * a fresh isolated root under the system temp directory, containing both the
+    session store and the daemon socket;
+  * that the exact id resolves inside that isolated store.
 
-Usage:
-    python3 acceptance/shim_adoption_probe.py [JCODE_BINARY]
+Everything the shim does is checked against an audit hook: every socket
+connect must target the probe's own socket, every opened file must live under
+the probe root, and no subprocess may be started. A probe that inherits
+``JCODE_ACP_SESSION_DIR`` / ``JCODE_ACP_SOCKET`` pointing outside the isolated
+root refuses to run.
 
-Exit 0 only if step 5 returns a result rather than an error.
+What it proves
+--------------
+  1. ``session/load`` for the exact declared id is forwarded upstream exactly
+     once, with the id byte-identical, and never as ``session/new``.
+  2. A different, unrelated session in the same isolated store is never
+     selected or touched.
+  3. Negative cases fail closed without an upstream call:
+       - unknown id        -> -32010 unknown_session
+       - traversal id      -> -32010 invalid_session_id
+       - no live socket    -> -32010 daemon_not_running
+  4. Immediately after a successful adoption a bogus id is still refused, so
+     success is not a blanket allow.
+  5. The shim reports ``spawnsDaemon: false`` and never forwards close/new.
+
+Usage::
+
+    python3 acceptance/shim_adoption_probe.py --session-id probe-session-0001
+
+Exit 0 only when every check passes. There is no default session id: an
+omitted ``--session-id`` is an error, not a fallback scan.
 """
-import glob
+
+from __future__ import annotations
+
+import argparse
 import json
 import os
-import select
+import shutil
 import socket
-import subprocess
 import sys
-import time
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.abspath(os.path.join(HERE, "..", "src"))
-DEFAULT_BINARY = os.path.expanduser("~/.jcode/scratch/jcode-target/debug/kcode")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
-INIT = {
-    "jsonrpc": "2.0", "id": 1, "method": "initialize",
-    "params": {
-        "protocolVersion": 1,
-        "clientInfo": {"name": "adoption-probe", "version": "1"},
-        "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False},
-                               "terminal": False},
-    },
-}
+from jcode_bridge.acp_shim import (  # noqa: E402
+    MODE_READ_ONLY,
+    SHIM_PRECONDITION_FAILED,
+    AdoptionShim,
+    InProcessUpstream,
+    ShimConfig,
+)
+
+ENV_OVERRIDES = ("JCODE_ACP_SESSION_DIR", "JCODE_ACP_SOCKET")
 
 
-def live_sockets():
-    pats = [os.path.expanduser("~/.jcode/scratch/*.sock"),
-            os.path.expanduser("~/.kcode/scratch/*.sock")]
-    out = []
-    for pat in pats:
-        for path in glob.glob(pat):
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(2)
+def _short_root() -> str:
+    """Temp root with a short path: AF_UNIX is capped near 104 bytes."""
+    for candidate in ("/tmp", "/private/tmp"):
+        if os.path.isdir(candidate) and os.access(candidate, os.W_OK):
+            return candidate
+    return tempfile.gettempdir()
+
+
+class Checker:
+    def __init__(self) -> None:
+        self.failures: List[str] = []
+        self.passes: List[str] = []
+
+    def check(self, ok: bool, label: str, detail: str = "") -> bool:
+        if ok:
+            self.passes.append(label)
+            print("PASS  " + label + (("  [" + detail + "]") if detail else ""))
+        else:
+            self.failures.append(label)
+            print("FAIL  " + label + (("  [" + detail + "]") if detail else ""))
+        return ok
+
+
+class Audit:
+    """Record connect/open/spawn events so isolation can be asserted."""
+
+    def __init__(self) -> None:
+        self.connects: List[str] = []
+        self.opens: List[str] = []
+        self.spawns: List[str] = []
+
+    def install(self) -> None:
+        audit = self
+
+        def hook(event: str, args: Tuple[Any, ...]) -> None:
             try:
-                s.connect(path)
-                out.append(path)
-            except Exception:
+                if event == "socket.connect":
+                    address = args[1] if len(args) > 1 else None
+                    if isinstance(address, (str, bytes)):
+                        audit.connects.append(
+                            address.decode() if isinstance(address, bytes) else address
+                        )
+                elif event == "open" and args:
+                    path = args[0]
+                    if isinstance(path, (str, bytes)):
+                        audit.opens.append(
+                            path.decode() if isinstance(path, bytes) else path
+                        )
+                elif event in ("subprocess.Popen", "os.exec", "os.posix_spawn"):
+                    audit.spawns.append(event)
+            except Exception:  # an audit hook must never break the probe
                 pass
-            finally:
-                s.close()
-    return out
+
+        sys.addaudithook(hook)
 
 
-def newest_persisted_session(exclude_prefixes=(), limit=5):
-    """Session stems that actually have a file on disk, newest first."""
-    stores = [os.path.expanduser("~/.jcode/sessions"),
-              os.path.expanduser("~/.kcode/sessions")]
-    found = []
-    for store in stores:
-        if not os.path.isdir(store):
-            continue
-        for path in glob.glob(os.path.join(store, "*.json")):
-            stem = os.path.basename(path)[:-len(".json")]
-            if any(stem.startswith(p) for p in exclude_prefixes):
-                continue
-            try:
-                found.append((os.path.getmtime(path), stem))
-            except OSError:
-                continue
-    found.sort(reverse=True)
-    return [stem for _, stem in found[:limit]]
+def _inside(path: str, root: str) -> bool:
+    if not isinstance(path, str):
+        return False
+    try:
+        resolved = os.path.realpath(path)
+        real_root = os.path.realpath(root)
+    except OSError:
+        return False
+    return resolved == real_root or resolved.startswith(real_root + os.sep)
 
 
-class Rpc:
-    """Strict request/response over an ACP child, matched by id."""
+def _write_session(directory: Path, session_id: str, title: str) -> None:
+    payload = {
+        "id": session_id,
+        "working_dir": str(directory / "project"),
+        "title": title,
+        "updated_at": "2026-11-03T00:00:00Z",
+    }
+    (directory / (session_id + ".json")).write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
 
-    def __init__(self, argv, env=None, label="child"):
-        self.label = label
-        self.proc = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
-        )
-        self.next_id = 1
 
-    def call(self, method, params, timeout):
-        rid = self.next_id
-        self.next_id += 1
+class Listener:
+    """A stand-in daemon socket: accepts a connect and immediately closes."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(str(path))
+        self.sock.listen(8)
+
+    def close(self) -> None:
         try:
-            self.proc.stdin.write(json.dumps(
-                {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}) + "\n")
-            self.proc.stdin.flush()
-        except BrokenPipeError:
-            return None
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            ready, _, _ = select.select([self.proc.stdout], [], [], 0.25)
-            if not ready:
-                continue
-            line = self.proc.stdout.readline()
-            if not line.strip():
-                continue
-            try:
-                frame = json.loads(line)
-            except ValueError:
-                continue
-            if frame.get("id") == rid:
-                return frame
-        return None
-
-    def close(self):
-        try:
-            self.proc.stdin.close()
-        except Exception:
+            self.sock.close()
+        except OSError:
             pass
-        try:
-            self.proc.wait(timeout=8)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-        return self.proc.stderr.read()
 
 
-def main():
-    binary = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BINARY
-    if not os.path.exists(binary):
-        print("binary not found:", binary)
-        return 1
+def _shim(session_dir: Path, socket_dir: Path, handler):
+    upstream = InProcessUpstream(handler=handler)
+    config = ShimConfig(
+        session_dirs=(str(session_dir),),
+        socket_paths=(str(socket_dir / "probe.sock"),),
+    )
+    shim = AdoptionShim(config=config, upstream_factory=lambda _cfg: upstream)
+    return shim, upstream
 
-    env = dict(os.environ)
-    env.pop("PYTHONPATH", None)
 
-    print("=== 1. operator session: %s --no-selfdev acp ===" % binary)
-    operator = Rpc([binary, "--no-selfdev", "acp"], env=env, label="operator")
-    init = operator.call("initialize", INIT["params"], 120)
-    if not init or "result" not in init:
-        operator.close()
-        print("FAIL: operator initialize got no result")
-        return 1
-    info = init["result"].get("agentInfo", {})
-    print("  operator ready:", info.get("name"), info.get("version"))
+def _call(shim: AdoptionShim, method: str, params: Optional[Dict[str, Any]] = None,
+          request_id: int = 1) -> Dict[str, Any]:
+    message: Dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        message["params"] = params
+    return shim.handle_message(message) or {}
 
-    print("=== 2. session/new on the operator child ===")
-    created = operator.call("session/new", {"cwd": "/tmp", "mcpServers": []}, 180)
-    if not created or "result" not in created:
-        operator.close()
-        print("FAIL: session/new got no result:", json.dumps(created)[:300] if created else None)
-        return 1
-    session_id = created["result"].get("sessionId")
-    print("  session_id:", session_id)
-    if not session_id:
-        operator.close()
-        print("FAIL: no sessionId in session/new result")
-        return 1
 
-    # A freshly created session has NO file on disk yet: the adapter persists a
-    # session when it saves it, not when it creates it. That is a real property
-    # of the harness, and it means "created" and "adoptable" are different
-    # states. The gate is right to refuse, so the happy path needs a session
-    # that has actually been persisted.
-    persisted = newest_persisted_session(exclude_prefixes=("session_bird",))
-    print("  persisted sessions available: %d (newest: %s)" % (
-        len(persisted), persisted[0] if persisted else "none"))
-    if not persisted:
-        operator.close()
-        print("FAIL: no persisted session to adopt")
-        return 1
+def _precondition(payload: Dict[str, Any]) -> Tuple[Optional[int], Optional[str]]:
+    error = payload.get("error") or {}
+    return error.get("code"), (error.get("data") or {}).get("precondition")
 
-    print("=== 3. locate the live daemon socket ===")
-    socks = []
-    for _ in range(20):
-        socks = live_sockets()
-        if socks:
-            break
-        time.sleep(1)
-    print("  live sockets:", socks or "(none)")
-    if not socks:
-        operator.close()
-        print("FAIL: no daemon socket became live, so the shim cannot be given one")
-        return 1
 
-    print("=== 4. start the shim against that socket ===")
-    shim_env = dict(env)
-    shim_env["PYTHONPATH"] = ""
-    shim = Rpc([
-        sys.executable, "-E", "-s", "-c",
-        "import sys; sys.path.insert(0, %r); "
-        "from jcode_bridge.acp_shim.__main__ import main; sys.exit(main())" % SRC,
-        "--session-dir", os.path.expanduser("~/.jcode/sessions"),
-        "--session-dir", os.path.expanduser("~/.kcode/sessions"),
-        "--socket", socks[0],
-        "--timeout", "120",
-        "--upstream", binary, "--no-selfdev", "acp",
-    ], env=shim_env, label="shim")
+def run(session_id: str, root: Path, audit: Audit) -> int:
+    check = Checker()
+    sessions = root / "sessions"
+    socket_dir = root / "sock"
+    sessions.mkdir()
+    socket_dir.mkdir()
+    session_file = sessions / (session_id + ".json")
 
-    shim_init = shim.call("initialize", INIT["params"], 180)
-    caps = (shim_init or {}).get("result", {}).get("agentCapabilities", {})
+    # A second, unrelated session proves the probe never picks "a" session.
+    other_id = "probe-unrelated-neighbour"
+    _write_session(sessions, session_id, "declared probe session")
+    _write_session(sessions, other_id, "must never be selected")
+    other_file = sessions / (other_id + ".json")
+    before = {
+        str(session_file): session_file.stat().st_mtime_ns,
+        str(other_file): other_file.stat().st_mtime_ns,
+    }
+
+    forwards: List[Tuple[str, Dict[str, Any]]] = []
+
+    def handler(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        forwards.append((method, dict(params)))
+        if method == "session/load":
+            return {"sessionId": params.get("sessionId"), "modes": []}
+        return {}
+
+    print("root:", root)
+    print("declared session id:", session_id)
+
+    # --- negative: no live socket -> daemon_not_running ---------------------
+    shim, upstream = _shim(sessions, socket_dir, handler)
+    init = _call(shim, "initialize", {"protocolVersion": 1})
+    caps = (init.get("result") or {}).get("agentCapabilities") or {}
     meta = (caps.get("_meta") or {}).get("jcode.acpShim") or {}
-    print("  shim upstreamState:", meta.get("upstreamState"))
-    print("  shim spawnsDaemon:", meta.get("spawnsDaemon"))
-    print("  shim loadSession:", caps.get("loadSession"))
-    print("  shim modes:", json.dumps(caps.get("modes")))
+    check.check(caps.get("loadSession") is True, "shim advertises loadSession")
+    check.check(meta.get("spawnsDaemon") is False, "shim reports spawnsDaemon=false",
+                json.dumps(meta))
+    check.check(caps.get("currentModeId") == MODE_READ_ONLY,
+                "shim advertises read-only mode", str(caps.get("currentModeId")))
+    check.check("close" not in (caps.get("sessionCapabilities") or {}),
+                "shim does not advertise session/close")
 
-    print("=== 5. session/load: the actual adoption ===")
-    target = persisted[0]
-    print("  adopting persisted session:", target)
-    loaded = shim.call("session/load",
-                       {"sessionId": target, "cwd": "/tmp", "mcpServers": []}, 180)
-    if loaded is None:
-        print("FAIL: session/load got no reply")
-        shim.close()
-        operator.close()
+    payload = _call(shim, "session/load", {"sessionId": session_id, "cwd": "/tmp"})
+    code, precond = _precondition(payload)
+    check.check(code == SHIM_PRECONDITION_FAILED and precond == "daemon_not_running",
+                "no socket -> daemon_not_running", "%s/%s" % (code, precond))
+    check.check(upstream.calls == [], "no socket -> upstream untouched",
+                str(upstream.calls))
+
+    # --- negative: unknown id ----------------------------------------------
+    shim_u, upstream_u = _shim(sessions, socket_dir, handler)
+    payload = _call(shim_u, "session/load", {"sessionId": session_id + "-absent"})
+    code, precond = _precondition(payload)
+    check.check(code == SHIM_PRECONDITION_FAILED and precond == "unknown_session",
+                "absent id -> unknown_session", "%s/%s" % (code, precond))
+    check.check(upstream_u.calls == [], "absent id -> upstream untouched")
+
+    # --- negative: traversal id --------------------------------------------
+    shim_t, upstream_t = _shim(sessions, socket_dir, handler)
+    payload = _call(shim_t, "session/load", {"sessionId": "../" + session_id})
+    code, precond = _precondition(payload)
+    check.check(code == SHIM_PRECONDITION_FAILED and precond == "invalid_session_id",
+                "traversal id -> invalid_session_id", "%s/%s" % (code, precond))
+    check.check(upstream_t.calls == [], "traversal id -> upstream untouched")
+
+    # --- happy path: exact explicit id, isolated live socket ----------------
+    listener = Listener(socket_dir / "probe.sock")
+    try:
+        shim_ok, upstream_ok = _shim(sessions, socket_dir, handler)
+        payload = _call(shim_ok, "session/load",
+                        {"sessionId": session_id, "cwd": "/tmp"})
+        check.check("error" not in payload, "exact id adopted",
+                    json.dumps(payload.get("result"))[:160])
+        (result_id,) = [p.get("sessionId") for m, p in forwards
+                        if m == "session/load"] or [None]
+        check.check(result_id == session_id,
+                    "session/load forwarded verbatim, exactly once",
+                    "forwarded=%r" % (result_id,))
+        check.check([m for m, _ in forwards] == ["session/load"],
+                    "no other upstream method was called",
+                    str([m for m, _ in forwards]))
+        check.check("session/new" not in upstream_ok.calls,
+                    "session/new was never forwarded", str(upstream_ok.calls))
+        check.check(payload.get("result", {}).get("sessionId") == session_id,
+                    "upstream result echoed the exact id")
+
+        # --- the gate is still a gate after a success ----------------------
+        payload = _call(shim_ok, "session/load",
+                        {"sessionId": "definitely_not_a_real_session_xyz"})
+        code, precond = _precondition(payload)
+        check.check(code == SHIM_PRECONDITION_FAILED and precond == "unknown_session",
+                    "bogus id after adoption still refused", "%s/%s" % (code, precond))
+
+        close_payload = _call(shim_ok, "session/close", {"sessionId": session_id})
+        check.check(close_payload.get("result", {}).get("closed") is False,
+                    "session/close is local, not forwarded")
+        check.check("session/close" not in upstream_ok.calls,
+                    "session/close never reached upstream", str(upstream_ok.calls))
+    finally:
+        listener.close()
+
+    # --- isolation evidence ------------------------------------------------
+    after = {
+        str(session_file): session_file.stat().st_mtime_ns,
+        str(other_file): other_file.stat().st_mtime_ns,
+    }
+    check.check(before[str(session_file)] == after[str(session_file)],
+                "declared session file was not modified")
+    check.check(before[str(other_file)] == after[str(other_file)],
+                "unrelated session file was not modified")
+
+    outside_connects = [p for p in audit.connects if not _inside(p, str(root))]
+    check.check(audit.connects and all(_inside(p, str(root)) for p in audit.connects),
+                "every socket connect targeted the isolated root",
+                str(sorted(set(audit.connects))))
+    check.check(not outside_connects, "no connect to a real daemon socket",
+                str(outside_connects))
+
+    json_opens = [p for p in audit.opens
+                  if p.endswith(".json") and os.path.isabs(p)]
+    outside_opens = [p for p in json_opens if not _inside(p, str(root))]
+    check.check(not outside_opens, "no session json read outside the probe root",
+                str(outside_opens[:5]))
+    check.check(audit.spawns == [], "no subprocess was spawned", str(audit.spawns))
+
+    print()
+    print("checks passed: %d, failed: %d" % (len(check.passes), len(check.failures)))
+    if check.failures:
+        print("FAILED:", ", ".join(check.failures))
         return 1
-    if "error" in loaded:
-        err = loaded["error"]
-        data = err.get("data") or {}
-        print("FAIL: session/load refused:", err.get("code"), data.get("precondition"),
-              "|", err.get("message"))
-        shim.close()
-        operator.close()
-        return 1
-
-    print("  ADOPTED:", json.dumps(loaded.get("result"))[:300])
-
-    # A successful load must not mean "the gate stopped gating". Immediately
-    # after the adoption, a bogus id must still be refused.
-    print("=== 6. the gate is still a gate ===")
-    bogus = shim.call("session/load",
-                      {"sessionId": "definitely_not_a_real_session_xyz",
-                       "cwd": "/tmp", "mcpServers": []}, 60)
-    code = None
-    precond = None
-    if bogus and "error" in bogus:
-        code = bogus["error"].get("code")
-        precond = (bogus["error"].get("data") or {}).get("precondition")
-    print("  bogus id ->", code, precond)
-    gated = (code == -32010 and precond == "unknown_session")
-
-    err_out = shim.close()
-    operator.close()
-    if err_out.strip():
-        print("shim stderr:", err_out[:400])
-    if not gated:
-        print("FAIL: after a successful load the shim accepted a bogus session id")
-        return 1
-    print("PASS: the shim adopted a live session and still refused a bogus one")
+    print("PASS: synthetic isolated adoption probe satisfied every check")
     return 0
+
+
+def _validate(argv: argparse.Namespace) -> Optional[str]:
+    if not argv.session_id:
+        return "--session-id is required; this probe never picks a session for you"
+    sid = argv.session_id
+    if not sid or sid != sid.strip():
+        return "--session-id must be non-empty and must not be padded"
+    if sid.startswith(".") or "/" in sid or "\\" in sid or "\x00" in sid:
+        return "--session-id must be a plain filename stem"
+    if len(sid) > 200:
+        return "--session-id is too long"
+    for name in ENV_OVERRIDES:
+        value = os.environ.get(name)
+        if value:
+            return ("%s is set (%r). Unset it: this probe must not inherit a "
+                    "real session store or socket" % (name, value))
+    if not hasattr(socket, "AF_UNIX"):
+        return "unsupported platform: no AF_UNIX sockets (Windows)"
+    return None
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Isolated synthetic acceptance probe for the ACP adoption shim.",
+    )
+    parser.add_argument("--session-id", required=False, default=None,
+                        help="Exact session id to adopt. Required. No fallback.")
+    args = parser.parse_args(argv)
+
+    problem = _validate(args)
+    if problem:
+        print("REFUSED:", problem)
+        return 2
+
+    audit = Audit()
+    audit.install()
+
+    root = Path(tempfile.mkdtemp(prefix="acp-adopt-probe-", dir=_short_root()))
+    try:
+        return run(args.session_id, root, audit)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":
