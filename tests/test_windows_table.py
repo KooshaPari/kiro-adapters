@@ -16,14 +16,21 @@ import time
 import unittest
 import unittest.mock as mock
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _support as S  # noqa: E402
+
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 )
 from kiro_adapters.inventory import _windows_table as wt  # noqa: E402
 
 
-def capture(rc=0, stdout="", stderr="", truncated=False, timed_out=False):
-    return wt.CaptureResult(rc, stdout, stderr, truncated, timed_out)
+def capture(
+    rc=0, stdout="", stderr="", truncated=False, timed_out=False, reader_stalled=False
+):
+    return wt.CaptureResult(
+        rc, stdout, stderr, truncated, timed_out, reader_stalled
+    )
 
 
 def _python(code: str):
@@ -68,6 +75,7 @@ class BoundedCaptureTests(unittest.TestCase):
         self.assertEqual(out.stderr, "")
         self.assertFalse(out.truncated)
         self.assertFalse(out.timed_out)
+        self.assertFalse(out.reader_stalled)
 
     def test_nonzero_exit_is_not_ok(self):
         out = wt._run_capture(_python("import sys; sys.exit(7)"), timeout=20)
@@ -97,6 +105,72 @@ class BoundedCaptureTests(unittest.TestCase):
         self.assertTrue(out.ok)
         self.assertEqual(len(out.stdout), 200_000)
         self.assertEqual(len(out.stderr), 200_000)
+
+    def test_pipe_outliving_the_child_is_stalled_not_empty_success(self):
+        """A grandchild holding the pipe must not look like empty success."""
+        with S.temp_dir() as tmp:
+            pidfile = tmp / "grandchild.pid"
+            child = (
+                "import subprocess, sys\n"
+                "p = subprocess.Popen([sys.executable, '-c', "
+                "'import time; time.sleep(60)'])\n"
+                "open(sys.argv[1], 'w').write(str(p.pid))\n"
+            )
+            started = time.monotonic()
+            try:
+                out = wt._run_capture(
+                    [sys.executable, "-c", child, str(pidfile)], timeout=20
+                )
+            finally:
+                pid = int(pidfile.read_text()) if pidfile.exists() else None
+                if pid is not None:
+                    try:
+                        os.kill(pid, 9)
+                    except OSError:
+                        pass
+            elapsed = time.monotonic() - started
+            self.assertEqual(out.returncode, 0)
+            self.assertTrue(out.reader_stalled)
+            self.assertFalse(out.ok)
+            self.assertLess(elapsed, 10.0)
+
+    def test_reader_thread_start_failure_kills_child_and_fails_closed(self):
+        """Thread exhaustion must not leak the child or raise to the caller."""
+
+        class BadThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("can't start new thread")
+
+            def join(self, timeout=None):
+                pass
+
+            def is_alive(self):
+                return False
+
+        spawned = []
+        real_popen = wt.subprocess.Popen
+
+        def tracking_popen(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            spawned.append(proc)
+            return proc
+
+        with mock.patch.object(wt.threading, "Thread", BadThread):
+            with mock.patch.object(wt.subprocess, "Popen", tracking_popen):
+                out = wt._run_capture(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5,
+                )
+        self.assertIsNone(out.returncode)
+        self.assertFalse(out.ok)
+        self.assertFalse(out.reader_stalled)
+        self.assertEqual(len(spawned), 1)
+        self.assertIsNotNone(
+            spawned[0].poll(), "child process leaked after thread failure"
+        )
 
 
 class TableReaderTests(unittest.TestCase):
@@ -135,6 +209,18 @@ class TableReaderTests(unittest.TestCase):
 
     def test_liveness_is_unknown_on_truncation(self):
         with mock.patch.object(wt, "_run_capture", return_value=capture(truncated=True)):
+            self.assertEqual(wt.windows_liveness(10), wt.UNKNOWN)
+
+    def test_stalled_reader_yields_no_table(self):
+        with mock.patch.object(
+            wt, "_run_capture", return_value=capture(reader_stalled=True)
+        ):
+            self.assertIsNone(wt.read_windows_table())
+
+    def test_stalled_reader_is_unknown_liveness(self):
+        with mock.patch.object(
+            wt, "_run_capture", return_value=capture(reader_stalled=True)
+        ):
             self.assertEqual(wt.windows_liveness(10), wt.UNKNOWN)
 
     def test_liveness_is_unknown_on_timeout(self):
@@ -211,6 +297,9 @@ class IdentityProbeTests(unittest.TestCase):
     def test_timeout_fails_closed(self):
         self.assertIsNone(self._read(result=capture(timed_out=True)))
 
+    def test_stalled_reader_fails_closed(self):
+        self.assertIsNone(self._read(result=capture(reader_stalled=True)))
+
     def test_nonzero_exit_fails_closed(self):
         payload = json.dumps({"pid": 10, "creation": "t", "executable": "C:\\x.exe"})
         self.assertIsNone(self._read(result=capture(rc=1, stdout=payload)))
@@ -279,6 +368,38 @@ class PowerShellResolutionTests(unittest.TestCase):
     def test_none_when_absent(self):
         with mock.patch.object(wt.shutil, "which", return_value=None):
             self.assertIsNone(wt._powershell_path())
+
+
+class TerminateTests(unittest.TestCase):
+    """A group kill is used only when the child still leads its own group."""
+
+    class FakeProc:
+        pid = 4242
+
+        def __init__(self):
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+
+    @unittest.skipUnless(os.name == "posix", "process groups are POSIX-only")
+    def test_killpg_used_when_child_leads_its_group(self):
+        proc = self.FakeProc()
+        with mock.patch.object(wt.os, "getpgid", return_value=proc.pid):
+            with mock.patch.object(wt.os, "killpg") as killpg:
+                with mock.patch.object(proc, "kill") as kill:
+                    wt._terminate(proc)
+        killpg.assert_called_once_with(proc.pid, 9)
+        kill.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "process groups are POSIX-only")
+    def test_pgid_mismatch_degrades_to_killing_only_the_child(self):
+        proc = self.FakeProc()
+        with mock.patch.object(wt.os, "getpgid", return_value=1):
+            with mock.patch.object(wt.os, "killpg") as killpg:
+                wt._terminate(proc)
+        killpg.assert_not_called()
+        self.assertTrue(proc.killed)
 
 
 if __name__ == "__main__":

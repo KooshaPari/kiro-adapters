@@ -40,7 +40,11 @@ _MAX_STDERR_BYTES = 64_000
 _READ_CHUNK = 65_536
 # How often the main thread re-checks the overflow flag and the deadline.
 _POLL_SECONDS = 0.05
-# How long to wait for the reader threads after the child has been killed.
+# How long to wait for the reader threads once the child is gone. A reader
+# still alive after this is a stalled pipe, not an empty stream: a grandchild
+# can inherit the pipe and keep it open after the child exits.
+_READER_JOIN_SECONDS = 1.0
+# How long to wait for the child itself once it has been signalled.
 _JOIN_SECONDS = 5.0
 
 _WINDOWS_TABLE: Optional[Dict[int, str]] = None
@@ -57,8 +61,9 @@ class CaptureResult(NamedTuple):
 
     ``returncode`` is ``None`` when the child could not be started at all.
     ``truncated`` means a stream passed its cap and the child was killed;
-    ``timed_out`` means the deadline expired. A truncated or timed-out read is
-    never partial evidence: callers must fail closed.
+    ``timed_out`` means the deadline expired; ``reader_stalled`` means a pipe
+    reader did not finish, so the captured text is not a complete answer even
+    if the child exited 0. None of these is evidence: callers must fail closed.
     """
 
     returncode: Optional[int]
@@ -66,6 +71,7 @@ class CaptureResult(NamedTuple):
     stderr: str
     truncated: bool
     timed_out: bool
+    reader_stalled: bool = False
 
     @property
     def ok(self) -> bool:
@@ -73,6 +79,7 @@ class CaptureResult(NamedTuple):
             self.returncode == 0
             and not self.truncated
             and not self.timed_out
+            and not self.reader_stalled
         )
 
 
@@ -112,11 +119,18 @@ def _drain_capped(stream, cap: int):
 
 
 def _terminate(proc: "subprocess.Popen") -> None:
-    """Best-effort kill of ``proc`` and, on POSIX, of its process group."""
+    """Best-effort kill of ``proc`` and, on POSIX, of its own process group.
+
+    The group kill is only correct because ``_run_capture`` starts the child in
+    a new session. Re-check that the child still leads its group so a future
+    spawn-path regression degrades to killing just the child instead of
+    signalling the harness's own group.
+    """
     if os.name == "posix":
         try:
-            os.killpg(proc.pid, 9)
-            return
+            if os.getpgid(proc.pid) == proc.pid:
+                os.killpg(proc.pid, 9)
+                return
         except (OSError, AttributeError):
             pass
     try:
@@ -137,9 +151,14 @@ def _run_capture(
     Both pipes are drained concurrently by reader threads, so a child that
     writes a lot to one stream cannot deadlock the other. Either stream
     crossing its cap kills the child and sets ``truncated``. The deadline
-    kills the child and sets ``timed_out``. Bytes are decoded as UTF-8 with
-    replacement, matching the explicit UTF-8 encoding the PowerShell probe
-    requests.
+    kills the child and sets ``timed_out``. A reader that is still running once
+    the child is gone (its pipe can outlive the child) sets
+    ``reader_stalled``; the stream is then *unknown*, never empty-and-success.
+    Any failure while starting a reader kills the child and fails closed.
+
+    Bytes are decoded as UTF-8 with replacement, matching the explicit UTF-8
+    encoding the PowerShell probe requests. This function does not raise for
+    ordinary resource failures; callers can rely on ``ok``.
     """
     # ``start_new_session`` is POSIX-only; on Windows a new session would only
     # add console noise, so suppress the window instead.
@@ -161,59 +180,83 @@ def _run_capture(
 
     collected: Dict[str, bytes] = {}
     overflow = threading.Event()
+    threads = []
+    timed_out = False
 
     def reader(name: str, stream, cap: int) -> None:
-        data, over = _drain_capped(stream, cap)
+        try:
+            data, over = _drain_capped(stream, cap)
+        except BaseException:  # never let a reader die without recording itself
+            data, over = b"", True
         collected[name] = data
         if over:
             overflow.set()
 
-    threads = [
-        threading.Thread(
-            target=reader,
-            args=("stdout", proc.stdout, max_stdout_bytes),
-            name="kiro-windows-stdout",
-            daemon=True,
-        ),
-        threading.Thread(
-            target=reader,
-            args=("stderr", proc.stderr, max_stderr_bytes),
-            name="kiro-windows-stderr",
-            daemon=True,
-        ),
-    ]
-    for thread in threads:
-        thread.start()
-
-    timed_out = False
-    deadline = time.monotonic() + max(timeout, 0.0)
-    while True:
-        if overflow.is_set():
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
-            break
-        try:
-            proc.wait(timeout=min(_POLL_SECONDS, remaining))
-            break
-        except subprocess.TimeoutExpired:
-            continue
-
-    if proc.poll() is None:
-        _terminate(proc)
-        # Unblock readers still parked on a pipe held open by a grandchild.
-        for pipe in (proc.stdout, proc.stderr):
-            try:
-                pipe.close()
-            except (OSError, ValueError):
-                pass
     try:
-        proc.wait(timeout=_JOIN_SECONDS)
-    except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-        pass
+        threads = [
+            threading.Thread(
+                target=reader,
+                args=("stdout", proc.stdout, max_stdout_bytes),
+                name="kiro-windows-stdout",
+                daemon=True,
+            ),
+            threading.Thread(
+                target=reader,
+                args=("stderr", proc.stderr, max_stderr_bytes),
+                name="kiro-windows-stderr",
+                daemon=True,
+            ),
+        ]
+        for thread in threads:
+            thread.start()
+
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            if overflow.is_set():
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                proc.wait(timeout=min(_POLL_SECONDS, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+
+        if proc.poll() is None:
+            _terminate(proc)
+        try:
+            proc.wait(timeout=_JOIN_SECONDS)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+            pass
+    except BaseException as exc:
+        # A reader that could not be started (thread exhaustion, MemoryError)
+        # must not leak the child or escape as an exception.
+        if proc.poll() is None:
+            _terminate(proc)
+            try:
+                proc.wait(timeout=_JOIN_SECONDS)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        # The child is gone, so readers see EOF on their own; never call
+        # ``pipe.close()`` here, it waits on the lock a live reader holds.
+        for thread in threads:
+            thread.join(_READER_JOIN_SECONDS)
+        if not isinstance(exc, Exception):
+            raise
+        return CaptureResult(None, "", "", False, False)
+
+    # Give the readers the chance to finish normally, then decide whether a
+    # still-running reader means the pipe outlived the child. Reading the
+    # missing stream as "" would make a stalled pipe look like empty success.
+    join_deadline = time.monotonic() + _READER_JOIN_SECONDS
     for thread in threads:
-        thread.join(_JOIN_SECONDS)
+        thread.join(max(0.0, join_deadline - time.monotonic()))
+    reader_stalled = any(thread.is_alive() for thread in threads)
+    # Never present a partially recorded capture as complete.
+    if set(collected) != {"stdout", "stderr"}:
+        reader_stalled = True
 
     stdout_bytes = collected.get("stdout", b"")
     stderr_bytes = collected.get("stderr", b"")
@@ -223,6 +266,7 @@ def _run_capture(
         stderr_bytes.decode("utf-8", errors="replace"),
         truncated=overflow.is_set(),
         timed_out=timed_out,
+        reader_stalled=reader_stalled,
     )
 
 
