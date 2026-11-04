@@ -142,9 +142,11 @@
       "evidence": [
         "acceptance/read-only-mode-verification.md",
         "acceptance/codex-backend-activation.md",
-        "commit 0736fcd"
+        "docs/ACP-ADOPTION-SHIM.md",
+        "phenotype-registry docs/sessions/2026-10-27-kirocrew-agent-ops/09_READ_ONLY_ENFORCEMENT_GAP.md",
+        "commit 8c2adb1"
       ],
-      "notes": "Real KiroCrew ask turns and a read-only tool observation exist (answers JCODE_BACKEND_OK and CLEAN_VERIFY_OK; write probe file absent; write-capable tools absent). These observations are real, but they do not prove same externally-started session identity, safe live detach, or cross-host consumer integration. Isolated or synthetic checks must not be treated as proof of that broader integration."
+      "notes": "Earlier: real KiroCrew ask turns and a read-only tool observation existed, but did not prove same-session identity, safe detach or cross-host integration. 2026-11-04 source reading found the read-only claim was ADVERTISED, not enforced: the shim forwarded session/prompt verbatim and upstream answers -32601 for session/set_mode, so the mode never reached the daemon (phenotype-registry 09_READ_ONLY_ENFORCEMENT_GAP.md). Fixed forward in 8c2adb1: prompts are now refused by default with -32012 and only forwarded under an explicit --allow-prompt-forwarding, at which point capabilities honestly flip readOnly=false. So read-only is now enforced AT THE SHIM BOUNDARY. What remains UNPROVEN is end-to-end: KiroCrew narrows a static tool allowlist and uses session/request_permission, while jcode arbitrates a live interaction lease; the shim does not bridge those models, so the daemon's own tool authority is unchanged whenever a prompt is forwarded. P6 stays UNKNOWN for the end-to-end claim only."
     },
     {
       "id": "P7",
@@ -192,11 +194,13 @@
       "pert": 3.2,
       "status": "UNKNOWN",
       "evidence": [
-        "docs/ACP-ADOPTION-SHIM.md",
         "acceptance/read-only-mode-verification.md",
-        "acceptance/observability-baseline.md"
+        "docs/mcp-invocation-evidence.md",
+        "docs/mcp-connect-diagnosis.md",
+        "commit ffe7f56",
+        "commit edcc513"
       ],
-      "notes": "355 tests and one live chat are real observations, but they do not establish cross-host end-to-end integration. Same externally-started session identity, safe live detach, and cross-host consumer integration remain unverified."
+      "notes": "Cross-host end-to-end integration is still not proven. 2026-11-04 evidence narrows it precisely: a REAL Kiro Crew agent turn dispatched tool kiro-inventory/agent_sources (structured row in ~/.kiro/crew/sessions/dashboard_chat-2-1793781242.jsonl with meta.input, meta.done=true) but returned \"Error: MCP server 'kiro-inventory' not connected\", and a later turn reported \"Connected MCP servers: 0 (0 tools)\". So DISPATCH is observed and EXECUTION failed. Cause identified in edcc513: agent sessions run the codex ACP backend and Crew composes session/new.mcpServers only from ~/.kiro/agents/<name>.json (acp/session_mcp.py:1-9,:368,:1472); the previously edited ~/.kiro/crew/mcp.json is dashboard projection read by nothing on the session path, and kiro-inventory appears in 0 of 17 agent specs. Also unproven: why kirocrew-core/cron also connect 0 tools."
     },
     {
       "id": "P10",
@@ -215,13 +219,121 @@
         "acceptance/codex-spawn-path-trace.md"
       ],
       "notes": "Close-out recorded. Shim doc leads with a deployment-status table; read-only-mode doc states PARTIAL honestly; spawn path trace explains the earlier failure. No claim that read-only mode is active."
+    },
+    {
+      "id": "P11",
+      "title": "Validate the Windows CIM assumptions against the real desk host",
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/windows-cim-live-validation.md",
+        "commit 3b58611"
+      ],
+      "notes": "All six assumptions CONFIRMED on desk, none refuted. LastBootUpTime returned 2026-11-03T03:39:42.6681070Z (7 fractional digits, matches the parser regex). A single matching pid yields a single JSON OBJECT with pid/creation/executable. A filter matching nothing yields empty stdout with exit 0 (the empty-result case, not a failure). ExecutablePath is null for 28 of 1385 processes, which the parser drops and the policy then refuses - correct fail-closed. powershell.exe 5.1.28000.3393 wins the resolution order. The UTF-8 preamble is load-bearing: with it a non-ASCII path survives as 16 high bytes; without it, eight literal '?' appear. Also noted: -EncodedCommand would emit CLIXML to stderr, which this module treats as a failed read - a trap for any future transport change, not a current defect."
+    },
+    {
+      "id": "P12",
+      "title": "Give Windows a real per-boot epoch so CIM identity can be placed on it",
+      "depends_on": [
+        "P11"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 3,
+      "pert": 2.0,
+      "status": "DONE",
+      "evidence": [
+        "src/kiro_adapters/inventory/_windows_boot.py",
+        "tests/test_windows_boot_identity.py",
+        "commit 6e8c31f"
+      ],
+      "notes": "Reads Win32_OperatingSystem.LastBootUpTime once per process run through the same bounded _run_capture path, cached, and returns unknown on any failure (missing shell, stderr, truncation, timeout, stalled reader, malformed text). Every failure is cached as unknown so the answer cannot change mid-run. same_process now requires boot epoch + exact pid + CIM creation time (cim-creation: prefix) + executable path together; unknown boot refuses on both sides. Composition proven by synthetic tests only."
+    },
+    {
+      "id": "P13",
+      "title": "Prove live adoption of a specific externally-started session, with detach",
+      "depends_on": [
+        "P6"
+      ],
+      "o": 2,
+      "m": 4,
+      "p": 8,
+      "pert": 4.3,
+      "status": "DONE",
+      "evidence": [
+        "acceptance/acp-live-adoption.md",
+        "acceptance/shim_adoption_probe.py",
+        "commit 7e0d429"
+      ],
+      "notes": "First real attached run against an externally-started daemon, entirely inside two disposable scratch roots (HOME and JCODE_HOME redirected, socket asserted inside scratch before start, JCODE_NO_TELEMETRY=1). Session session_palmtree_1793781570983_6ba126eb93a04965 created on the isolated daemon; session/load forwarded that exact id and returned the daemon's configOptions; session/new answered -32601; session/close returned {closed:false, detached:true}; the session file was byte-identical (SHA256_BEFORE == SHA256_AFTER) immediately after detach; two later ACP clients re-loaded the same session, so detach neither cancelled nor closed it; serve-process count was unchanged (2 -> 2), so adoption spawned no daemon. Only the two scratch PIDs were signalled, each re-verified by matching its command line to its own scratch socket. The synthetic probe remains the regression gate (27 checks)."
+    },
+    {
+      "id": "P14",
+      "title": "Make the read-only claim true at the shim boundary",
+      "depends_on": [
+        "P13"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "DONE",
+      "evidence": [
+        "src/jcode_bridge/acp_shim/server.py",
+        "tests/test_acp_adoption_shim.py",
+        "commit 8c2adb1"
+      ],
+      "notes": "session/prompt is refused locally with -32012 SHIM_PROMPT_FORWARDING_DISABLED plus structured data, checked after the adoption precondition and before any upstream call. Forwarding requires the explicit --allow-prompt-forwarding flag, and capabilities then flip readOnly=false / promptForwarding=true so the advertisement matches reality. session/cancel is local while prompting is disabled. Unchanged: session/new blocked at the transport, session/close never forwarded, write-config refusal, and the two-probe adoption gate. Residual, documented in docs/ACP-ADOPTION-SHIM.md: once a prompt IS forwarded the daemon's own tool authority is unenforceable."
+    },
+    {
+      "id": "P15",
+      "title": "Bridge KiroCrew's static allowlist onto jcode's live interaction lease",
+      "depends_on": [
+        "P14"
+      ],
+      "o": 4,
+      "m": 8,
+      "p": 16,
+      "pert": 8.7,
+      "status": "NOT_RUN",
+      "evidence": [
+        "docs/KAS-VS-JCODE.md:27",
+        "phenotype-registry docs/sessions/2026-10-27-kirocrew-agent-ops/09_READ_ONLY_ENFORCEMENT_GAP.md"
+      ],
+      "notes": "The remaining reason a forwarded prompt is not contained. Kiro Crew derives and narrows a static tool allowlist and drives permission through session/request_permission; jcode arbitrates a live per-session interaction lease (require_interaction_ownership, src/cli/acp/interactions.rs). The shim is a passthrough and maps neither onto the other. This is a design project, not a flag. Until it exists, 'read-only' is a shim-boundary property only."
+    },
+    {
+      "id": "P16",
+      "title": "Wire the read-only inventory server into the agent spec that sessions read",
+      "depends_on": [
+        "P9"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "NOT_RUN",
+      "evidence": [
+        "docs/mcp-connect-diagnosis.md",
+        "commit edcc513"
+      ],
+      "notes": "Minimal described fix: add kiro-inventory to ~/.kiro/agents/kirocrew.json mcpServers using the jcode-bridge stdio shape, plus the '@kiro-inventory' tool reference if that convention is already used there. Specs are re-read per spawn, so no restart is needed. Not applied at the time of writing."
     }
   ],
   "carried_unknowns": [
-    "whether the installed Windows KCode build advertises interactionController (source says cfg!(unix); installed binary not probed)",
-    "harness/_common.py and Electron app.asar are unread",
-    "Windows GUI gateway respawn after a CLI stop is not proven linked",
-    "whether initialize succeeds for the genuine codex-acp on an idle host (the 90s timeout was measured under load 91-144, so it is unattributed)"
+    "Whether the installed Windows capability interactionController is advertised (source says cfg!(unix); binary unprobed).",
+    "harness/_common.py and Electron app.asar are unread.",
+    "Windows GUI gateway respawn after a CLI stop is not proven linked.",
+    "Why kirocrew-core and cron also report 0 connected MCP tools, given they are neither withheld nor unmounted.",
+    "Whether agent.sandbox=auto with no available backend also blocks session spawn.",
+    "Windows identity composition is validated only by synthetic tests; the boot epoch and CIM row have been confirmed on the real host, but the composed match has not been exercised there.",
+    "Whether the shipped CLI flags now work in a live adoption: the fix (6800b9c) postdates the live run, so only the environment overrides are proven."
   ],
   "measured_host_state": {
     "gateway_service": "dev.kirocrew.gateway (launchd), healthy",

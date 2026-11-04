@@ -44,6 +44,12 @@ Corollary: a node that cannot be made durable should be split until it can.
 | P8 | Record the real log/disk trend (`gateway.err`, `diag/` ~3.4 MB/day, 53 GiB free) | P0 | 1/1/2 | 1.2 | DONE |
 | P9 | Integration verify: full test suite + one live end-to-end chat | P1,P3,P6,P7,P8 | 2/3/5 | 3.2 | UNKNOWN |
 | P10 | Close-out: update `07_PILOT_RESULTS.md` + `ACP-ADOPTION-SHIM.md` with measured outcomes | P9 | 1/1/2 | 1.2 | DONE |
+| P11 | Validate the Windows CIM assumptions against the real `desk` host | P0 | 1/2/4 | 2.2 | DONE |
+| P12 | Give Windows a real per-boot epoch so CIM identity can be placed on it | P11 | 1/2/3 | 2.0 | DONE |
+| P13 | Prove live adoption of a specific externally-started session, with detach | P6 | 2/4/8 | 4.3 | DONE |
+| P14 | Make the read-only claim true at the shim boundary | P13 | 1/2/4 | 2.2 | DONE |
+| P15 | Bridge KiroCrew's static allowlist onto jcode's live interaction lease | P14 | 4/8/16 | 8.7 | NOT_RUN |
+| P16 | Wire the read-only inventory server into the agent spec that sessions read | P9 | 1/2/4 | 2.2 | NOT_RUN |
 
 PERT expectation = (O + 4M + P) / 6, in 10-minute blocks. These are **block counts sized
 against the repo's 10-minute convention**, not measured wall-clock durations. Per the
@@ -76,6 +82,53 @@ satisfied with P3 recorded as `BLOCKED_OPERATOR` rather than faked as `DONE`.
   premises that previously consumed a full dispatch on wrong assumptions.
 
 ## Known UNKNOWNs carried forward
+
+## Update 2026-11-04: P6 was overclaimed, and is now half-closed
+
+The read-only property was **advertised, not enforced**. Source reading found the shim
+forwarded `session/prompt` verbatim while upstream answers `-32601` for
+`session/set_mode`, so the mode never reached the daemon. Every positive signal
+(handshake, advertised `read-only`, rejection of other modes) was true while the actual
+write authority was unchanged. Full write-up:
+`phenotype-registry docs/sessions/2026-10-27-kirocrew-agent-ops/09_READ_ONLY_ENFORCEMENT_GAP.md`.
+
+Fixed forward in `8c2adb1`: prompts are refused by default (`-32012`) and only forwarded
+under an explicit `--allow-prompt-forwarding`, at which point capabilities flip
+`readOnly=false`. So the shim boundary is now honest. The end-to-end claim stays
+**UNKNOWN**, because the daemon's own tool authority is untouched whenever a prompt is
+forwarded, and P15 (permission-model bridge) does not exist.
+
+## Update 2026-11-04: P9 dispatch observed, execution failed
+
+A real Kiro Crew agent turn did dispatch `kiro-inventory`/`agent_sources` and got
+`Error: MCP server 'kiro-inventory' not connected`; a later turn reported
+`Connected MCP servers: 0 (0 tools)`. Cause (`edcc513`): agent sessions run the codex ACP
+backend and Crew composes `session/new.mcpServers` only from `~/.kiro/agents/<name>.json`;
+`~/.kiro/crew/mcp.json` is dashboard projection read by nothing on the session path, and
+`kiro-inventory` appears in 0 of 17 specs. Earlier reporting of `/api/mcp/active` as
+success was measuring the wrong surface.
+
+Also worth keeping: `gateway.log` logs WARNING+ only and contains no MCP lines. The
+structured store is `~/.kiro/crew/sessions/*.jsonl`, where `role: "tool"` rows carry
+`meta.tool_call_id/input/output/done`. Prior log-grep attempts came back empty because
+they searched the wrong file.
+
+## Update 2026-11-04: live adoption and Windows validation are now measured
+
+- **P13 DONE.** First real adoption of a specific externally-started session
+  (`session_palmtree_1793781570983_6ba126eb93a04965`) inside disposable scratch roots:
+  exact id forwarded, `session/new` `-32601`, `session/close` a local detach, session
+  file byte-identical after detach, two later clients re-loaded it, no daemon spawned.
+  Evidence: `acceptance/acp-live-adoption.md`.
+- **P11/P12 DONE.** All six Windows CIM assumptions confirmed on `desk`; the UTF-8
+  preamble is load-bearing, and `ExecutablePath` is null for 28/1385 processes (those
+  fail closed). Evidence: `acceptance/windows-cim-live-validation.md`.
+- **Found and fixed live:** the shipped CLI silently discarded every flag, because a
+  console-script entry point calls `main()` with no arguments (`6800b9c`). Adoption only
+  worked through the environment overrides. The fix postdates the live run, so "flags
+  work live" is still UNKNOWN.
+- **Found and fixed:** two refusal paths raised instead of refusing (`6863863`).
+
 
 ## Audit correction (2026-11-02)
 
