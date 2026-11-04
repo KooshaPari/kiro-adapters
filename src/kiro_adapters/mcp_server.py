@@ -12,7 +12,9 @@ third-party package is involved, so the server runs anywhere CPython 3.9+ runs.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import os
 import sys
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -35,6 +37,10 @@ INTERNAL_ERROR = -32603
 
 _CREW: Optional[KiroCrewAdapter] = None
 _CODE: Optional[KiroCodeAdapter] = None
+
+# Opt-in attestation: when this env var names a file, every tool invocation
+# appends one redacted JSON line. Unset/empty means no file and no work at all.
+AUDIT_LOG_ENV = "KIRO_INVENTORY_AUDIT_LOG"
 
 
 def _crew() -> KiroCrewAdapter:
@@ -334,15 +340,33 @@ _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
 }
 
 
-def call_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
-              mode=None, inventory_only=False, **kwargs) -> R.AdapterResult:
-    """Run one tool. Never raises: failures come back as an error result.
+def _audit_tool_call(name: str, result: R.AdapterResult) -> None:
+    """Append one redacted attestation line when ``KIRO_INVENTORY_AUDIT_LOG`` is set.
 
-    Non-allowlisted tools are rejected even when a caller invokes them by
-    name (they are not merely hidden from ``tools/list``).
+    The record carries the tool name, its success flag, the response size and
+    nothing else: no arguments, no results, no paths, no user data. Telemetry
+    must never break a tool call, so every failure here is swallowed.
     """
-    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
-    if name not in _allowed_tool_names(resolved):
+    path = os.environ.get(AUDIT_LOG_ENV, "").strip()
+    if not path:
+        return
+    try:
+        line = json.dumps({
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "tool": name,
+            "ok": bool(result.ok),
+            "result_bytes": len(result.to_json().encode("utf-8")),
+        })
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+    except Exception:  # noqa: BLE001 - drop the record, never the call
+        pass
+
+
+def _execute_tool(name: str, arguments: Optional[Dict[str, Any]],
+                  mode: str) -> R.AdapterResult:
+    """Resolve and run one tool without auditing it."""
+    if name not in _allowed_tool_names(mode):
         return R.AdapterResult.failure(
             name.split("_", 1)[0], name, R.ERROR,
             "tool not available in inventory-only mode: {}".format(name)
@@ -358,6 +382,20 @@ def call_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
         return R.AdapterResult.failure(
             name.split("_", 1)[0], name, R.ERROR, "{}: {}".format(type(exc).__name__, exc)
         )
+
+
+def call_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
+              mode=None, inventory_only=False, **kwargs) -> R.AdapterResult:
+    """Run one tool. Never raises: failures come back as an error result.
+
+    Non-allowlisted tools are rejected even when a caller invokes them by
+    name (they are not merely hidden from ``tools/list``). Every invocation
+    is eligible for one redacted attestation line; see ``_audit_tool_call``.
+    """
+    resolved = _coerce_mode(mode, inventory_only=inventory_only, **kwargs)
+    result = _execute_tool(name, arguments, resolved)
+    _audit_tool_call(name, result)
+    return result
 
 
 # -- JSON-RPC plumbing ----------------------------------------------------
