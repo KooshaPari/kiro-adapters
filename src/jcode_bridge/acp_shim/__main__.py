@@ -106,6 +106,12 @@ def split_upstream(argv: Optional[List[str]]) -> Tuple[List[str], List[str]]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # A console-script entry point (``jcode-acp-adopt") calls this with NO
+    # arguments, and ``python -m`` calls it the same way. Defaulting to
+    # ``sys.argv[1:]`` keeps the documented flags working on both paths; an
+    # explicit list still wins so tests can call this directly.
+    if argv is None:
+        argv = sys.argv[1:]
     head, upstream_argv = split_upstream(argv)
     args = build_parser().parse_args(head)
     upstream = tuple(args.upstream) if args.upstream else tuple(upstream_argv)
@@ -126,4 +132,4 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
