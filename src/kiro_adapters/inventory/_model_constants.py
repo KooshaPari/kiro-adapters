@@ -24,6 +24,7 @@ SOURCE_CODEX_APP_SERVER = "codex-app-server"
 SOURCE_KIROCREW_LEDGER = "kirocrew-ledger"
 SOURCE_HERDR_PANE = "herdr-pane"
 SOURCE_SHARECLI_PROC = "sharecli-proc"
+SOURCE_SHARECLI_SESSION = "sharecli-session"
 SOURCE_FORGE_FS = "forge-fs"
 
 # -- launch modes -----------------------------------------------------------

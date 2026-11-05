@@ -54,6 +54,7 @@ from ._model_constants import (  # noqa: F401  (re-exported public surface)
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
     SOURCE_SHARECLI_PROC,
+    SOURCE_SHARECLI_SESSION,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_EXITED,
