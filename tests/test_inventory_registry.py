@@ -27,6 +27,7 @@ from kiro_adapters.inventory.model import (  # noqa: E402
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
+    SOURCE_ORCA_FS,
     STATE_STALE,
 )
 
@@ -103,7 +104,12 @@ class SourceTests(RegistryCase):
         sources = registry.available_sources()
         self.assertEqual(
             [entry["source"] for entry in sources],
-            [SOURCE_JCODE_FS, SOURCE_KCODE_FS, SOURCE_KIROCREW_LEDGER],
+            [
+                SOURCE_JCODE_FS,
+                SOURCE_KCODE_FS,
+                SOURCE_KIROCREW_LEDGER,
+                SOURCE_ORCA_FS,
+            ],
         )
         present = {entry["source"]: entry["present"] for entry in sources}
         self.assertTrue(present[SOURCE_JCODE_FS])
@@ -204,7 +210,7 @@ class HistoryTests(RegistryCase):
         summary = registry.inventory_summary()
         self.assertGreaterEqual(summary["total"], 2)
         self.assertIn(SOURCE_JCODE_FS, summary["by_source"])
-        self.assertEqual(len(summary["sources"]), 3)
+        self.assertEqual(len(summary["sources"]), 4)
 
 
 if __name__ == "__main__":

@@ -160,7 +160,7 @@ class ListAndSourcesTests(InventoryToolCase):
     def test_sources_lists_every_store(self):
         is_error, payload = _call("agent_sources", {})
         self.assertFalse(is_error)
-        self.assertEqual(payload["data"]["count"], 3)
+        self.assertEqual(payload["data"]["count"], 4)
         present = {s["source"]: s["present"] for s in payload["data"]["sources"]}
         self.assertTrue(present[SOURCE_JCODE_FS])
         self.assertTrue(present[SOURCE_KIROCREW_LEDGER])

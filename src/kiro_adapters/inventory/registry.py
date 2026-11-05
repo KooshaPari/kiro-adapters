@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import jcode_fs, kirocrew_fs, sharecli_fs
+from . import jcode_fs, kirocrew_fs, orca_fs, sharecli_fs
 from .model import (
     MAX_HISTORY_LIMIT,
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
+    SOURCE_ORCA_FS,
     SOURCE_SHARECLI_SESSION,
     STATE_STALE,
     SessionEnvelope,
@@ -60,6 +61,7 @@ KNOWN_SOURCES = (
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
+    SOURCE_ORCA_FS,
 )
 
 # Alias that says what ``KNOWN_SOURCES`` actually is: the file-backed set.
@@ -83,6 +85,7 @@ _HARNESS_KIND = {
     SOURCE_JCODE_FS: "jcode",
     SOURCE_KCODE_FS: "kcode",
     SOURCE_KIROCREW_LEDGER: "kirocrew",
+    SOURCE_ORCA_FS: "orca",
     SOURCE_SHARECLI_SESSION: "sharecli",
 }
 
@@ -90,6 +93,7 @@ _STORE_SUBDIR = {
     SOURCE_JCODE_FS: ".jcode",
     SOURCE_KCODE_FS: ".kcode",
     SOURCE_KIROCREW_LEDGER: ".kiro",
+    SOURCE_ORCA_FS: "Library/Application Support/orca",
 }
 
 
@@ -108,6 +112,8 @@ def _build_store(source: str):
         return jcode_fs.kcode_store(probe_processes=False)
     if source == SOURCE_KIROCREW_LEDGER:
         return kirocrew_fs.default_store()
+    if source == SOURCE_ORCA_FS:
+        return orca_fs.default_store()
     if source == SOURCE_SHARECLI_SESSION:
         return sharecli_fs.default_store()
     return None
@@ -212,7 +218,11 @@ def enumerate_sessions(
         if store is None:
             continue
         try:
-            if source in (SOURCE_KIROCREW_LEDGER, SOURCE_SHARECLI_SESSION):
+            if source in (
+                SOURCE_KIROCREW_LEDGER,
+                SOURCE_ORCA_FS,
+                SOURCE_SHARECLI_SESSION,
+            ):
                 found = store.enumerate(limit=bound)
             else:
                 found = store.enumerate()
