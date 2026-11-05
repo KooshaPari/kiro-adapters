@@ -362,27 +362,57 @@ _HANDLERS: Dict[str, Callable[[Dict[str, Any]], R.AdapterResult]] = {
 }
 
 
-def _audit_tool_call(name: str, result: R.AdapterResult) -> None:
+def _audit_event(event: str, **fields: Any) -> None:
     """Append one redacted attestation line when ``KIRO_INVENTORY_AUDIT_LOG`` is set.
 
-    The record carries the tool name, its success flag, the response size and
-    nothing else: no arguments, no results, no paths, no user data. Telemetry
-    must never break a tool call, so every failure here is swallowed.
+    Every failure is swallowed: telemetry must never break the server.
     """
     path = os.environ.get(AUDIT_LOG_ENV, "").strip()
     if not path:
         return
     try:
-        line = json.dumps({
+        record = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "tool": name,
-            "ok": bool(result.ok),
-            "result_bytes": len(result.to_json().encode("utf-8")),
-        })
+            "event": event,
+        }
+        record.update(fields)
         with open(path, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+            handle.write(json.dumps(record) + "\n")
     except Exception:  # noqa: BLE001 - drop the record, never the call
         pass
+
+
+def _audit_start(mode: str, argv: Sequence[str]) -> None:
+    """Record that this server was SPAWNED, independently of any tool call.
+
+    Why this exists: a ``tool`` record proves a call, which requires the model to
+    choose the tool. It cannot distinguish "the server is mounted but the model
+    never called it" from "the server was never mounted". A ``start`` record
+    settles that: if the process ran at all, the host mounted it.
+
+    Carries the mode and the argv only - both are operator-supplied launch
+    arguments, never user data.
+    """
+    _audit_event(
+        "start",
+        pid=os.getpid(),
+        mode=mode,
+        argv=[str(a) for a in argv],
+    )
+
+
+def _audit_tool_call(name: str, result: R.AdapterResult) -> None:
+    """Append one redacted attestation line when ``KIRO_INVENTORY_AUDIT_LOG`` is set.
+
+    The record carries the tool name, its success flag, the response size and
+    nothing else: no arguments, no results, no paths, no user data.
+    """
+    _audit_event(
+        "tool",
+        tool=name,
+        ok=bool(result.ok),
+        result_bytes=len(result.to_json().encode("utf-8")),
+    )
 
 
 def _execute_tool(name: str, arguments: Optional[Dict[str, Any]],
@@ -545,6 +575,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="alias for --inventory-only")
     args = parser.parse_args(list(argv) if argv is not None else None)
     resolved_mode = "inventory" if (args.inventory_only or args.read_only) else args.mode
+    # Attest that the server was SPAWNED. This is emitted before any protocol
+    # handling so a host that mounts the server and never calls a tool still
+    # leaves a record - the only way to tell "mounted but uncalled" apart from
+    # "never mounted".
+    _audit_start(str(resolved_mode), list(argv) if argv is not None else sys.argv[1:])
     if args.selftest:
         sys.stdout.write(json.dumps({"tools": build_tools(mode=resolved_mode)}, indent=2) + "\n")
         sys.stdout.flush()
