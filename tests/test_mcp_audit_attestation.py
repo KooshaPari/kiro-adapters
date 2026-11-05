@@ -110,6 +110,28 @@ if __name__ == "__main__":
 class StartAttestationTests(unittest.TestCase):
     """The server records that it was SPAWNED, not only that a tool was called."""
 
+    def _set_audit_env(self, value):
+        """Set or clear the audit env var and restore it on cleanup.
+
+        Mutating ``os.environ`` without restoring leaks into whichever test runs
+        next - which is exactly what happened: these two tests passed in
+        isolation and errored in the full suite, because a later test inherited a
+        temp path that no longer existed.
+        """
+        previous = os.environ.get(M.AUDIT_LOG_ENV)
+
+        def restore():
+            if previous is None:
+                os.environ.pop(M.AUDIT_LOG_ENV, None)
+            else:
+                os.environ[M.AUDIT_LOG_ENV] = previous
+
+        self.addCleanup(restore)
+        if value is None:
+            os.environ.pop(M.AUDIT_LOG_ENV, None)
+        else:
+            os.environ[M.AUDIT_LOG_ENV] = value
+
     def test_start_is_recorded_without_any_tool_call(self):
         """A mounted-but-uncalled server must still leave evidence.
 
@@ -120,7 +142,7 @@ class StartAttestationTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "audit.jsonl"
-            os.environ[M.AUDIT_LOG_ENV] = str(path)
+            self._set_audit_env(str(path))
             self.assertEqual(M.main(["--inventory-only", "--selftest"]), 0)
 
             records = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
@@ -135,6 +157,6 @@ class StartAttestationTests(unittest.TestCase):
     def test_start_is_not_written_when_audit_is_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "audit.jsonl"
-            os.environ.pop(M.AUDIT_LOG_ENV, None)
+            self._set_audit_env(None)
             self.assertEqual(M.main(["--inventory-only", "--selftest"]), 0)
             self.assertFalse(path.exists())
