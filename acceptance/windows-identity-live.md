@@ -191,3 +191,54 @@ None of these is fixed in this commit: the task was to prove the behaviour on
 the real host, and the honest report is that it does not compose. The
 follow-up is to fix (1) and (2), re-run this same probe, and only then accept
 items 3, 4 and 5.
+
+---
+
+## Follow-up 2026-11-05: the refutation above was a real bug, now fixed and re-verified
+
+The three REFUTED items shared one root cause, and it was a defect, not a gap.
+
+`_POWERSHELL_PREAMBLE` is written with **doubled braces** (`try {{ ... }} catch {{ }}`)
+because callers pipe it through `str.format()`. `_windows_boot.py` concatenated it
+**without** calling `.format()`.
+
+PowerShell does not error on that. It treats `{{ ... }}` as a nested script **block**
+and emits the block's text to stdout, so the output becomes two lines:
+
+```
+ [Console]::OutputEncoding = New-Object -TypeName System.Text.UTF8Encoding -ArgumentList $false
+2026-11-03T03:39:42.6681070Z
+```
+
+`_windows_boot.read_windows_boot_epoch` has its own single-line guard (`"\n" in text`),
+so it rejected the value and returned `None`. Exit code 0, empty stderr, nothing in any
+log. `boot_id()` therefore returned `unknown`, which cascaded: `describe_many` binds no
+pids without a shared boot, and `same_process` can never be True on Windows. One silent
+two-line stdout disabled the entire Windows identity path.
+
+Measured on the host, both forms over ssh, same query:
+
+| Script form | stdout | Accepted? |
+|---|---|---|
+| unrendered (old) | block text + epoch = 2 lines | no -> `unknown` |
+| rendered (new) | `2026-11-03T03:39:42.6681070Z` = 1 line | yes |
+
+Fixed in `b8e51e9`: render with `.format()`, double this script's own literal braces, and
+assert before dispatch that no escape sequence survived. Verified: 497 tests OK, plus the
+one-line epoch above from the real host.
+
+### Why the mocked tests could not have caught it
+
+They returned a fabricated `CaptureResult` and never executed the script, so the only
+observable they could check was the argv text - and they did not check it. The new
+regression test asserts on that text (`assertNotIn("{{", script)`), which is the only
+thing a non-Windows host can verify. This is the general lesson: on a foreign platform, a
+mock that replaces the boundary proves the caller, never the command.
+
+### Still open after this fix
+
+- `same_process` returning True for a live Windows handle has not been re-verified on the
+  host yet; the boot epoch is now available, so it is testable but not tested.
+- 3 unit tests still fail on Windows for a test-portability reason (`IdentityProbe`
+  injects a POSIX-shaped start identity that the Windows gate correctly refuses). Test
+  defect, not a product defect, still unfixed.
