@@ -98,6 +98,38 @@ class BootEpochReadTests(unittest.TestCase):
         self.assertIn("LastBootUpTime", argv[-1])
         self.assertEqual(kwargs.get("timeout"), wb._TIMEOUT_SECONDS)
 
+    def test_script_reaching_powershell_has_no_unrendered_braces(self):
+        """The preamble is brace-escaped for ``str.format``; it must be rendered.
+
+        ``_POWERSHELL_PREAMBLE`` is written as ``try {{ ... }} catch {{ }}`` so
+        that callers can ``.format()`` it. A caller that concatenates it without
+        rendering sends ``{{ }}`` to PowerShell, which does not error: it treats
+        the doubled braces as a nested script block and emits that block's text
+        to stdout. The output then has two lines, and this module's single-line
+        guard rejects it, so the value silently reads as unknown.
+
+        That is not hypothetical: it is exactly why ``boot_id()`` returned
+        ``unknown`` on a real Windows host - exit 0, empty stderr - while every
+        mocked test here passed. The mock returned a value and never executed the
+        script, so the only thing a non-Windows host can actually check is the
+        argv text. That is what this test checks.
+        """
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return capture(stdout=EPOCH)
+
+        with mock.patch.object(wb, "_powershell_path", return_value="ps.exe"):
+            with mock.patch.object(wb, "_run_capture", side_effect=fake_run):
+                wb.read_windows_boot_epoch()
+
+        script = calls[0][-1]
+        self.assertNotIn("{{", script, "double braces reached PowerShell")
+        self.assertNotIn("}}", script, "double braces reached PowerShell")
+        # And the rendering must not have eaten the deliberate block.
+        self.assertIn("{ exit 1 }", script)
+
     def test_epoch_is_cached_per_process_run(self):
         with mock.patch.object(wb, "_powershell_path", return_value="ps.exe"):
             with mock.patch.object(

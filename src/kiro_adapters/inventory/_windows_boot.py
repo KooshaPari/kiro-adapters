@@ -50,12 +50,28 @@ def read_windows_boot_epoch() -> Optional[str]:
     shell = _powershell_path()
     if shell is None:
         return None
+    # NOTE: `_POWERSHELL_PREAMBLE` is written with DOUBLED braces because it is
+    # designed to go through ``str.format``. Every literal brace in this script
+    # must be doubled for the same reason, and ``.format()`` MUST be called.
+    #
+    # Measured consequence of not calling it, on a real Windows host: PowerShell
+    # does not error. It treats ``{{ ... }}`` as a nested script BLOCK and emits
+    # that block's text to stdout, so the output becomes two lines - the block
+    # text, then the epoch. This function's own single-line guard
+    # (``"\n" in text``) then rejects the value and the boot epoch reads as
+    # unknown. Silent, with exit code 0 and empty stderr, which is why every
+    # mocked test passed while the path was dead on the host: the mock returned a
+    # value and never executed the script.
     script = (
         _POWERSHELL_PREAMBLE
         + "$os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; "
-        "if ($null -eq $os -or $null -eq $os.LastBootUpTime) { exit 1 }; "
+        "if ($null -eq $os -or $null -eq $os.LastBootUpTime) {{ exit 1 }}; "
         "$os.LastBootUpTime.ToUniversalTime().ToString('o')"
-    )
+    ).format()
+    # Cheap guard against the same mistake returning: a rendered script must not
+    # still contain the escape sequences.
+    if "{{" in script or "}}" in script:  # pragma: no cover - defensive
+        raise AssertionError("unrendered PowerShell braces")
     out = _run_capture(
         [shell, "-NoProfile", "-NonInteractive", "-Command", script],
         timeout=_TIMEOUT_SECONDS,
