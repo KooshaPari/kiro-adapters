@@ -374,12 +374,12 @@
       "m": 3,
       "p": 6,
       "pert": 3.2,
-      "status": "NOT_RUN",
+      "status": "DONE",
       "evidence": [
         "acceptance/windows-identity-live.md",
-        "commit 4d4c373"
+        "commits b8e51e9, 399b82b"
       ],
-      "notes": "REFUTED ON HARDWARE: boot_id() returns `unknown` on desk, so describe_many binds 0 of 2 pids and same_process can never be True on Windows. process_start works, so the CIM read is fine - the boot epoch is the single root cause and the failure cascades. The mocked tests were all green, which is exactly why this had to run on the host. Suspects, in order: _run_capture behaviour on Windows, PowerShell stderr noise turned into a failure by the empty-stderr gate, _powershell_path resolution, the 15s cold-start timeout, or the 7-fractional-digit regex. Also 3 tests fail on Windows for a TEST-portability reason (IdentityProbe injects a POSIX-shaped start identity that the Windows gate correctly refuses) and should be made platform-correct."
+      "notes": "CLOSED AND PROVEN ON HARDWARE. Two independent defects, both invisible to the mocked suite because both lived in the REQUEST rather than the answer. (1) _windows_boot.py concatenated the brace-escaped _POWERSHELL_PREAMBLE without calling .format(); PowerShell treats {{ }} as a nested script block and emits its text to stdout, so output was two lines and the single-line guard rejected it, leaving boot_id() unknown. (2) windows_liveness ran `tasklist -NH` without -FO CSV yet parsed rows as CSV, so every row was skipped, every liveness answer was UNKNOWN and describe_many dropped every pid - which only surfaced after (1) was fixed, because before that the code never reached the liveness check. Measured on desk after both fixes: boot_id is cim-boot:2026-11-03T03:39:42.6681070Z; describe_many bound 2 of 2; start_identity is a subsecond cim-creation; same_process(own) True; wrong pid, exe, start and boot all refused. The identity and boot suites ran on the host: 56 tests OK, including the 3 that used to fail for fixture-portability reasons, now built from the product's own platform predicate."
     },
     {
       "id": "P20",
@@ -405,11 +405,11 @@
     "Windows GUI gateway respawn after a CLI stop is not proven linked.",
     "Why kirocrew-core and cron also report 0 connected MCP tools, given they are neither withheld nor unmounted.",
     "Whether agent.sandbox=auto with no available backend also blocks session spawn.",
-    "Windows identity composition is validated only by synthetic tests; the boot epoch and CIM row have been confirmed on the real host, but the composed match has not been exercised there.",
     "Whether the shipped CLI flags now work in a live adoption: the fix (6800b9c) postdates the live run, so only the environment overrides are proven.",
     "The actual session/new.mcpServers payload for one turn: without it, omission-by-array vs drop-by-transport is undecidable.",
     "Whether codex-acp MERGES session/new.mcpServers with ~/.codex/config.toml or replaces it. Codex-side delivery is proven; Crew-side is not, and this is the discriminator.",
-    "Whether codex-acp MERGES or REPLACES session/new.mcpServers with ~/.codex/config.toml - Crew's composer mounts the entry and Codex-side delivery is proven, yet a Crew turn still never calls the tool."
+    "Whether codex-acp MERGES or REPLACES session/new.mcpServers with ~/.codex/config.toml - Crew's composer mounts the entry and Codex-side delivery is proven, yet a Crew turn still never calls the tool.",
+    "Windows identity is now proven on hardware for the caller's own process; binding pids belonging to other users remains untested there."
   ],
   "measured_host_state": {
     "gateway_service": "dev.kirocrew.gateway (launchd), healthy",
