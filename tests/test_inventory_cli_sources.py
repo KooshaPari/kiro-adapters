@@ -28,7 +28,10 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 )
 from kiro_adapters.inventory import registry  # noqa: E402
-from kiro_adapters.inventory.model import SOURCE_SHARECLI_SESSION  # noqa: E402
+from kiro_adapters.inventory.model import (  # noqa: E402
+    SOURCE_HERDR_PANE,
+    SOURCE_SHARECLI_SESSION,
+)
 from kiro_adapters.inventory.sharecli_fs import ShareCLIStore  # noqa: E402
 from kiro_adapters import mcp_server  # noqa: E402
 
@@ -98,10 +101,15 @@ class RegistryCliOptInCase(unittest.TestCase):
 
     def test_known_sources_semantics_unchanged(self):
         # KNOWN_SOURCES stays the file-backed set; FILE_SOURCES is the same
-        # tuple object, and CLI_SOURCES is separate.
+        # tuple object, and CLI_SOURCES is separate. The CLI set is asserted by
+        # membership rather than by an exact tuple, because more than one
+        # adapter is CLI-backed by necessity (sharecli, herdr-pane) and the
+        # invariant that matters is "file-backed stays file-backed".
         self.assertIs(registry.FILE_SOURCES, registry.KNOWN_SOURCES)
         self.assertNotIn(SOURCE_SHARECLI_SESSION, registry.KNOWN_SOURCES)
-        self.assertEqual(registry.CLI_SOURCES, (SOURCE_SHARECLI_SESSION,))
+        self.assertNotIn(SOURCE_HERDR_PANE, registry.KNOWN_SOURCES)
+        self.assertIn(SOURCE_SHARECLI_SESSION, registry.CLI_SOURCES)
+        self.assertIn(SOURCE_HERDR_PANE, registry.CLI_SOURCES)
 
     def test_malformed_cli_degrades_to_zero_not_raise(self):
         def malformed(argv):

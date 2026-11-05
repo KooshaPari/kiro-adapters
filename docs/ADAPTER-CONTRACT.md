@@ -124,7 +124,7 @@ The inventory layer reads two kinds of source, and the contract keeps them apart
 | Kind | Sources | How they are read |
 |---|---|---|
 | File-backed | `jcode`, `kcode`, `kirocrew` | Direct file reads of each harness's on-disk store. This is the whole of `KNOWN_SOURCES` and the whole of the "a discovery call is a file read" guarantee. |
-| CLI-backed | `sharecli-session` | A `sharecli session list` subprocess. ShareCLI is the authority on which ledger it answers from, so its reader is CLI-backed by necessity. |
+| CLI-backed | `sharecli-session`, `herdr-pane` | A `sharecli session list` subprocess, and a `herdr api snapshot` subprocess over HERDR's socket. Each is CLI-backed by necessity: ShareCLI is the authority on which ledger it answers from, and HERDR's own server owns the snapshot's wire framing. `herdr-pane` reports only the agents HERDR itself enrolled (an agent appears only after self-reporting into HERDR's socket), so it is not a host-wide process inventory. |
 
 The CLI-backed source is **not** in `KNOWN_SOURCES`. It is gated behind an explicit opt-in,
 `include_cli=True` on the registry's discovery functions, and behind the environment variable

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import jcode_fs, kirocrew_fs, orca_fs, sharecli_fs
+from . import herdr_fs, jcode_fs, kirocrew_fs, orca_fs, sharecli_fs
 from .model import (
     MAX_HISTORY_LIMIT,
+    SOURCE_HERDR_PANE,
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
@@ -68,10 +69,19 @@ KNOWN_SOURCES = (
 FILE_SOURCES = KNOWN_SOURCES
 
 # CLI-backed sources. These are reachable only through an explicit opt-in, never
-# by default and never from an argument a model controls. ShareCLI is the
-# authority on which ledger it answers from, so its reader is CLI-backed by
-# necessity; that is exactly why it cannot ride in ``KNOWN_SOURCES``.
-CLI_SOURCES = (SOURCE_SHARECLI_SESSION,)
+# by default and never from an argument a model controls. Both are CLI-backed
+# by necessity and not by preference:
+#
+# * ShareCLI is the authority on which ledger it answers from;
+# * HERDR's snapshot is served over its own socket by its own server, so its
+#   reader must spawn ``herdr api snapshot``. Herdr is also a *control* surface
+#   (``agent prompt``, ``pane send-text``), which is a second reason it must
+#   never run on a path a consumer did not ask for.
+#
+# Two behaviours follow for ``herdr-pane`` specifically: it reports only the
+# agents herdr enrolled, and its ``history`` is a declared refusal because a
+# snapshot carries no turns. Both are stated in the envelope, not inferred.
+CLI_SOURCES = (SOURCE_SHARECLI_SESSION, SOURCE_HERDR_PANE)
 
 
 def _active_sources(include_cli: bool) -> Tuple[str, ...]:
@@ -87,6 +97,7 @@ _HARNESS_KIND = {
     SOURCE_KIROCREW_LEDGER: "kirocrew",
     SOURCE_ORCA_FS: "orca",
     SOURCE_SHARECLI_SESSION: "sharecli",
+    SOURCE_HERDR_PANE: "herdr",
 }
 
 _STORE_SUBDIR = {
@@ -116,6 +127,8 @@ def _build_store(source: str):
         return orca_fs.default_store()
     if source == SOURCE_SHARECLI_SESSION:
         return sharecli_fs.default_store()
+    if source == SOURCE_HERDR_PANE:
+        return herdr_fs.default_store()
     return None
 
 
@@ -124,6 +137,11 @@ def _store_path(source: str) -> Optional[str]:
     if source == SOURCE_SHARECLI_SESSION:
         try:
             return sharecli_fs.default_store().store_path()
+        except (RuntimeError, OSError):
+            return None
+    if source == SOURCE_HERDR_PANE:
+        try:
+            return herdr_fs.default_store().store_path()
         except (RuntimeError, OSError):
             return None
     subdir = _STORE_SUBDIR.get(source)
@@ -222,6 +240,7 @@ def enumerate_sessions(
                 SOURCE_KIROCREW_LEDGER,
                 SOURCE_ORCA_FS,
                 SOURCE_SHARECLI_SESSION,
+                SOURCE_HERDR_PANE,
             ):
                 found = store.enumerate(limit=bound)
             else:
