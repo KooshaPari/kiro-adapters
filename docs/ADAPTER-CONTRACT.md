@@ -117,6 +117,33 @@ The four inventory tools carry three guarantees a caller may rely on.
 Read-only means the inventory surface never writes: it does not start, adopt, resume, cancel or
 close a session. Acting on a session is deliberately out of scope for this contract.
 
+### File-backed versus CLI-backed sources
+
+The inventory layer reads two kinds of source, and the contract keeps them apart.
+
+| Kind | Sources | How they are read |
+|---|---|---|
+| File-backed | `jcode`, `kcode`, `kirocrew` | Direct file reads of each harness's on-disk store. This is the whole of `KNOWN_SOURCES` and the whole of the "a discovery call is a file read" guarantee. |
+| CLI-backed | `sharecli-session` | A `sharecli session list` subprocess. ShareCLI is the authority on which ledger it answers from, so its reader is CLI-backed by necessity. |
+
+The CLI-backed source is **not** in `KNOWN_SOURCES`. It is gated behind an explicit opt-in,
+`include_cli=True` on the registry's discovery functions, and behind the environment variable
+`KIRO_INVENTORY_ALLOW_CLI_SOURCES=1` at the MCP edge. Both default to off, for one reason: an
+MCP tool call that silently spawns a subprocess from an agent turn is a different risk class
+from reading a file, so it must be an operator decision, never a model decision.
+
+To enable ShareCLI session detection, set the variable in the server's environment:
+
+```bash
+KIRO_INVENTORY_ALLOW_CLI_SOURCES=1 kiro-adapter-mcp --mode inventory
+```
+
+There is no tool argument for it: the model cannot turn it on for itself. When it is off (the
+default), a ShareCLI uid is unrecognised by `agent_session_get`/`agent_session_history` and a
+`sharecli-session` envelope never appears in `agent_sessions_list`, even if a ShareCLI binary is
+installed. When it is on, a malformed or failing ShareCLI invocation still degrades to zero
+sessions rather than raising, exactly like a broken file-backed store.
+
 ### jcode bridge tools, a separate server
 
 The `jcode-bridge` MCP server is not part of the ten above; it advertises its own ten tools and

@@ -160,6 +160,14 @@ harness data directories the inventory reads. The inventory tools never
 start, resume, or close a session. Parameter names and result codes are
 in `docs/ADAPTER-CONTRACT.md`.
 
+The inventory reads file-backed stores (`jcode`, `kcode`, `kirocrew`) by
+default. ShareCLI is CLI-backed by necessity, so it is an explicit opt-in:
+set `KIRO_INVENTORY_ALLOW_CLI_SOURCES=1` in the server's environment to
+include the `sharecli-session` source. It is off by default because an MCP
+tool call silently spawning a subprocess from an agent turn is a different
+risk class from reading a file, and there is no tool argument for it, so
+the model cannot turn it on for itself. See `docs/ADAPTER-CONTRACT.md`.
+
 ## The jcode harness-API bridge
 
 The `jcode_bridge` package points the same idea the other way: instead of Kiro
