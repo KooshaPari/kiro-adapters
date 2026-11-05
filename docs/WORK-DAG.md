@@ -150,3 +150,33 @@ they searched the wrong file.
 
 None of these block the critical path; all are recorded so a successor does not re-derive
 them from scratch or, worse, assert them.
+
+## Audit correction 2026-11-05: commit 399b82b contains unattributed work
+
+`399b82b` is titled "ask tasklist for the CSV shape the parser reads", but its file
+list is:
+
+```
+acceptance/windows-identity-live.md
+src/kiro_adapters/inventory/__init__.py
+src/kiro_adapters/inventory/_windows_table.py
+src/kiro_adapters/inventory/registry.py
+src/kiro_adapters/mcp_server.py
+tests/test_process_identity_failclosed.py
+tests/test_windows_table.py
+```
+
+`registry.py`, `mcp_server.py` and `__init__.py` are the **CLI-source opt-in
+implementation** written by a parallel lane (`d2702a1` later added its docs and
+tests). They were swept into `399b82b` by a careless `git add -A`, so the commit
+message does not describe about half of the change.
+
+The code itself is sound and covered: `FILE_SOURCES` keeps `KNOWN_SOURCES`
+semantics unchanged, `CLI_SOURCES = (sharecli-session,)`, the opt-in reaches the
+MCP edge only through `KIRO_INVENTORY_ALLOW_CLI_SOURCES` (never a tool argument,
+so a model cannot enable it), and 508 tests pass.
+
+Recorded rather than rewritten, because the commit is published. A future reader
+diffing `399b82b` should read this before concluding the opt-in appeared without a
+commit message. Process lesson: `git add -A` in a shared working tree attributes
+another lane's work to your message. Stage explicit paths.
