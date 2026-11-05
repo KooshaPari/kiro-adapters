@@ -242,3 +242,45 @@ mock that replaces the boundary proves the caller, never the command.
 - 3 unit tests still fail on Windows for a test-portability reason (`IdentityProbe`
   injects a POSIX-shaped start identity that the Windows gate correctly refuses). Test
   defect, not a product defect, still unfixed.
+
+---
+
+## Closed 2026-11-05: composed identity now PROVEN on the host
+
+The refutation is fully resolved. Two independent defects, both invisible to a mocked
+suite, both found by running on hardware:
+
+| # | Defect | Effect | Fix |
+|---|---|---|---|
+| 1 | `_windows_boot.py` concatenated the brace-escaped `_POWERSHELL_PREAMBLE` without `.format()` | PowerShell emitted the nested block's text as an extra stdout line, the single-line guard rejected it, `boot_id()` returned `unknown` | render with `.format()`; assert no escape sequence survives |
+| 2 | `windows_liveness` ran `tasklist -NH` **without** `-FO CSV` but parsed rows as CSV | every row yielded one field, every liveness re-check answered `UNKNOWN`, so `describe_many` dropped every pid | add `/FO CSV` |
+
+Defect 2 only surfaced *after* defect 1 was fixed: with a real boot id the code reached
+the liveness re-check for the first time and dropped both pids anyway.
+
+### Measured on the host after both fixes
+
+```
+boot_id: cim-boot:2026-11-03T03:39:42.6681070Z
+boot is cim-boot: True
+describe_many bound: 2 of 2
+start_identity: cim-creation:2026-11-05T05:48:22.0405870
+exe non-empty: True
+same_process(own): True
+refuse wrong pid  : True
+refuse wrong exe  : True
+refuse wrong start: True
+refuse wrong boot : True
+```
+
+The composed match works, and all four single-component perturbations are refused. The
+whole suite for identity and boot (`test_process_identity_failclosed`,
+`test_windows_boot_identity`) ran on the host: **56 tests, OK** - including the three that
+formerly failed there for a fixture-portability reason, which are now built from the same
+platform predicate the product uses.
+
+### Standing lesson
+
+Both defects lived in the *request*, not the *answer*. A mock that returns the shape the
+parser wants proves the parser and never the command construction, so on a foreign
+platform the argv itself must be asserted. Both fixes carry such a test.

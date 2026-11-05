@@ -36,10 +36,27 @@ from kiro_adapters.inventory.model import ProcessInstance  # noqa: E402
 from kiro_adapters.inventory.processes import same_process  # noqa: E402
 
 PID = os.getpid()
-START = "proc-stat:123456789"
+
+# The identity shape the product ACCEPTS differs per platform, because the probe it
+# trusts differs: POSIX admits `proc-stat:`/`proc-bsdinfo:` subsecond starts, while
+# Windows admits only a CIM creation timestamp and refuses anything else regardless
+# of how plausible it looks. Fixtures that inject the POSIX shape therefore make the
+# suite fail on Windows for a reason that has nothing to do with the behaviour under
+# test - which is exactly what happened: 3 tests failed on the real host.
+#
+# So build the fixtures from the same platform predicate the product uses. These
+# tests then exercise the SAME logic on both platforms instead of asserting a POSIX
+# assumption everywhere.
+if process_table.is_windows():
+    START = "cim-creation:2026-11-03T03:39:42.6681070Z"
+    BOOT = "cim-boot:2026-11-03T03:39:42.6681070Z"
+    EXE = r"C:\Windows\System32\agent.exe"
+else:
+    START = "proc-stat:123456789"
+    BOOT = "boot-abc"
+    EXE = "/usr/local/bin/agent"
+
 COARSE = "lstart:Mon Oct 19 08:38:05 2026"
-BOOT = "boot-abc"
-EXE = "/usr/local/bin/agent"
 
 
 def recorded(exe=EXE, start=START, boot=BOOT, pid=PID):

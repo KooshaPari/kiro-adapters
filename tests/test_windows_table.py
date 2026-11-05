@@ -305,6 +305,35 @@ class TableReaderTests(unittest.TestCase):
         with mock.patch.object(wt, "_run_capture", return_value=capture(stdout="garbage\n")):
             self.assertEqual(wt.windows_liveness(10), wt.UNKNOWN)
 
+    def test_liveness_requests_the_csv_shape_it_parses(self):
+        """The argv must ask for the format the row parser actually reads.
+
+        ``windows_liveness`` parses rows by splitting on '","' and reading field
+        1 as the pid. That only works for ``tasklist /FO CSV``; without the flag
+        tasklist prints space-aligned columns, every line yields one field, the
+        parser skips them all and the function answers UNKNOWN for a live
+        process.
+
+        The test above cannot catch that, because it mocks ``_run_capture`` with
+        CSV-shaped stdout no matter which flags were requested - the mock supplies
+        the answer the parser wants rather than exercising the request. On a real
+        Windows host the consequence was total: every liveness re-check answered
+        UNKNOWN, so ``describe_many`` bound 0 of 2 pids. Asserting on argv is what
+        a non-Windows host can actually verify.
+        """
+        seen = []
+
+        def fake_run(argv, **kwargs):
+            seen.append(argv)
+            return capture(stdout='"a.exe","10"\n')
+
+        with mock.patch.object(wt, "_run_capture", side_effect=fake_run):
+            self.assertEqual(wt.windows_liveness(10), wt.ALIVE)
+
+        argv = seen[0]
+        self.assertIn("/FO", argv, "tasklist format flag missing")
+        self.assertEqual(argv[argv.index("/FO") + 1], "CSV")
+
 
 class IdentityProbeTests(unittest.TestCase):
     """The CIM probe parses valid JSON and refuses every ambiguous read."""

@@ -346,7 +346,16 @@ def windows_liveness(pid: int) -> str:
     output, a timeout - is an unknown answer, not a dead process.
     """
     out = _run_capture(
-        ["tasklist", "/FI", "PID eq {}".format(pid), "/NH"], timeout=20
+        # ``/FO CSV`` is REQUIRED, not cosmetic: the row parser below splits on
+        # '","' and reads field 1 as the pid. Without the format flag tasklist
+        # prints space-aligned columns, every line yields a single field, the
+        # parser skips them all, and this function returns UNKNOWN for a process
+        # that is plainly alive. That silently disables every caller that
+        # re-checks liveness before binding an identity - which is why
+        # ``describe_many`` bound 0 of 2 pids on a real Windows host while
+        # ``boot_id()`` had already started working.
+        ["tasklist", "/FI", "PID eq {}".format(pid), "/FO", "CSV", "/NH"],
+        timeout=20,
     )
     if not out.ok:
         return UNKNOWN

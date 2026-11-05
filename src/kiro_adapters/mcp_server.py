@@ -42,6 +42,21 @@ _CODE: Optional[KiroCodeAdapter] = None
 # appends one redacted JSON line. Unset/empty means no file and no work at all.
 AUDIT_LOG_ENV = "KIRO_INVENTORY_AUDIT_LOG"
 
+# Opt-in for CLI-backed inventory sources. Default OFF: the four read-only
+# inventory tools promise "a discovery call is a file read". ShareCLI is
+# CLI-backed by necessity, so folding it in silently would let one agent turn
+# spawn a subprocess from an MCP tool call -- a different risk class from
+# reading a file. It is enabled only by this env flag, never by a tool
+# argument, so the model cannot turn it on for itself.
+CLI_SOURCES_ENV = "KIRO_INVENTORY_ALLOW_CLI_SOURCES"
+
+
+def _cli_sources_enabled() -> bool:
+    """Whether the operator opted the inventory surface into CLI sources."""
+    return os.environ.get(CLI_SOURCES_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
 
 def _crew() -> KiroCrewAdapter:
     global _CREW
@@ -145,8 +160,12 @@ _TOOLS = [
      "harness prompt agent timeout_secs", "harness prompt"),
     # Read-only session inventory. These only read harness stores: no daemon
     # is contacted, no harness binary is run and no session is resumed.
+    # ShareCLI is the one CLI-backed source; it is OFF unless the operator sets
+    # KIRO_INVENTORY_ALLOW_CLI_SOURCES (never via a tool argument).
     ("agent_sessions_list",
-     "List agent sessions detectable on this host (read-only; no process started).",
+     "List agent sessions detectable on this host (read-only; no process started. "
+     "CLI-backed sources such as ShareCLI are excluded unless "
+     "KIRO_INVENTORY_ALLOW_CLI_SOURCES is set on the server).",
      "limit include_stale", ""),
     ("agent_session_get", "Return one detected agent session by its session uid.",
      "session_uid", "session_uid"),
@@ -232,7 +251,9 @@ def _agent_sessions_list(args: Dict[str, Any]) -> R.AdapterResult:
     if not isinstance(include_stale, bool):
         include_stale = True
     envelopes = registry.enumerate_sessions(
-        limit=_optional_int(args, "limit"), include_stale=include_stale
+        limit=_optional_int(args, "limit"),
+        include_stale=include_stale,
+        include_cli=_cli_sources_enabled(),
     )
     return R.AdapterResult.success(
         "inventory",
@@ -253,7 +274,7 @@ def _agent_session_get(args: Dict[str, Any]) -> R.AdapterResult:
         return R.AdapterResult.failure(
             "inventory", "agent_session_get", R.ERROR, "session_uid is required"
         )
-    envelope = registry.find_session(session_uid)
+    envelope = registry.find_session(session_uid, include_cli=_cli_sources_enabled())
     if envelope is None:
         return R.AdapterResult.failure(
             "inventory",
@@ -281,6 +302,7 @@ def _agent_session_history(args: Dict[str, Any]) -> R.AdapterResult:
     data = registry.session_history(
         session_uid,
         limit=registry.DEFAULT_HISTORY_LIMIT if limit is None else limit,
+        include_cli=_cli_sources_enabled(),
     )
     if not data.get("ok"):
         return R.AdapterResult.failure(
@@ -300,7 +322,7 @@ def _agent_session_history(args: Dict[str, Any]) -> R.AdapterResult:
 
 def _agent_sources(args: Dict[str, Any]) -> R.AdapterResult:
     """The stores this host exposes for session detection."""
-    sources = registry.available_sources()
+    sources = registry.available_sources(include_cli=_cli_sources_enabled())
     present = sum(1 for source in sources if source.get("present"))
     return R.AdapterResult.success(
         "inventory",

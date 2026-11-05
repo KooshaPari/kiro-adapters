@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import jcode_fs, kirocrew_fs
+from . import jcode_fs, kirocrew_fs, sharecli_fs
 from .model import (
     MAX_HISTORY_LIMIT,
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
+    SOURCE_SHARECLI_SESSION,
     STATE_STALE,
     SessionEnvelope,
     clamp_history_limit,
@@ -47,16 +48,42 @@ DEFAULT_HISTORY_LIMIT = 20
 
 # The sources this registry knows how to read, in a stable order so two calls
 # produce the same output.
+#
+# Rule #2 promises "a discovery call is a file read": the file-backed sources
+# below are the whole of that promise. They are enumerated by default and are
+# behaviourally identical to what ``KNOWN_SOURCES`` has always been, so no
+# existing caller's meaning changes. The CLI-backed source lives in
+# ``CLI_SOURCES`` and is deliberately *not* folded in here: reading a file and
+# spawning a subprocess are different risk classes, and the registry will only
+# touch the latter when a caller opts in explicitly (``include_cli=True``).
 KNOWN_SOURCES = (
     SOURCE_JCODE_FS,
     SOURCE_KCODE_FS,
     SOURCE_KIROCREW_LEDGER,
 )
 
+# Alias that says what ``KNOWN_SOURCES`` actually is: the file-backed set.
+FILE_SOURCES = KNOWN_SOURCES
+
+# CLI-backed sources. These are reachable only through an explicit opt-in, never
+# by default and never from an argument a model controls. ShareCLI is the
+# authority on which ledger it answers from, so its reader is CLI-backed by
+# necessity; that is exactly why it cannot ride in ``KNOWN_SOURCES``.
+CLI_SOURCES = (SOURCE_SHARECLI_SESSION,)
+
+
+def _active_sources(include_cli: bool) -> Tuple[str, ...]:
+    """The sources a discovery call walks, given the opt-in flag."""
+    if include_cli:
+        return KNOWN_SOURCES + CLI_SOURCES
+    return KNOWN_SOURCES
+
+
 _HARNESS_KIND = {
     SOURCE_JCODE_FS: "jcode",
     SOURCE_KCODE_FS: "kcode",
     SOURCE_KIROCREW_LEDGER: "kirocrew",
+    SOURCE_SHARECLI_SESSION: "sharecli",
 }
 
 _STORE_SUBDIR = {
@@ -81,11 +108,18 @@ def _build_store(source: str):
         return jcode_fs.kcode_store(probe_processes=False)
     if source == SOURCE_KIROCREW_LEDGER:
         return kirocrew_fs.default_store()
+    if source == SOURCE_SHARECLI_SESSION:
+        return sharecli_fs.default_store()
     return None
 
 
 def _store_path(source: str) -> Optional[str]:
     """The conventional store path for a source, without touching it."""
+    if source == SOURCE_SHARECLI_SESSION:
+        try:
+            return sharecli_fs.default_store().store_path()
+        except (RuntimeError, OSError):
+            return None
     subdir = _STORE_SUBDIR.get(source)
     if subdir is None:
         return None
@@ -108,15 +142,16 @@ def _present(source: str) -> bool:
         return False
 
 
-def available_sources() -> List[Dict[str, Any]]:
+def available_sources(include_cli: bool = False) -> List[Dict[str, Any]]:
     """Every source this registry can read, with presence and store path.
 
     Presence is a directory-existence check only: it does not enumerate and
     does not read a record, so calling this is cheap on a machine with a large
-    session store.
+    session store. CLI-backed sources are omitted unless ``include_cli`` is
+    true: reporting them is itself a statement that a subprocess may run.
     """
     out: List[Dict[str, Any]] = []
-    for source in KNOWN_SOURCES:
+    for source in _active_sources(include_cli):
         out.append(
             {
                 "source": source,
@@ -129,17 +164,20 @@ def available_sources() -> List[Dict[str, Any]]:
 
 
 # -- session uid handling --------------------------------------------------
-def parse_session_uid(session_uid: Any) -> Optional[Tuple[str, str]]:
+def parse_session_uid(
+    session_uid: Any, include_cli: bool = False
+) -> Optional[Tuple[str, str]]:
     """Split ``"<source>:<native_session_id>"`` into its two parts.
 
     Returns ``None`` for anything that is not a uid naming a known source with
     a non-empty native id. The split is on the *first* colon only: a native id
-    may legitimately contain one.
+    may legitimately contain one. A uid naming a CLI-backed source is only
+    recognised when ``include_cli`` is true, matching enumeration.
     """
     if not isinstance(session_uid, str):
         return None
     source, sep, native_id = session_uid.partition(":")
-    if not sep or not native_id or source not in KNOWN_SOURCES:
+    if not sep or not native_id or source not in _active_sources(include_cli):
         return None
     return source, native_id
 
@@ -148,6 +186,7 @@ def parse_session_uid(session_uid: Any) -> Optional[Tuple[str, str]]:
 def enumerate_sessions(
     limit: Optional[int] = None,
     include_stale: bool = True,
+    include_cli: bool = False,
 ) -> List[SessionEnvelope]:
     """Every session the present stores can name, in a deterministic order.
 
@@ -155,7 +194,9 @@ def enumerate_sessions(
     failing the call: one unreadable store must not blind a consumer to the
     other two. ``include_stale=False`` drops sessions whose jcode heartbeat is
     missing -- those are the ones a ``~/.jcode`` directory keeps long after the
-    process is gone.
+    process is gone. ``include_cli=True`` adds CLI-backed sources, which may
+    spawn a subprocess; it is off by default because a discovery call is a
+    file read until a caller opts into the heavier contract.
     """
     try:
         bound = DEFAULT_SESSION_LIMIT if limit is None else int(limit)
@@ -166,12 +207,12 @@ def enumerate_sessions(
     bound = min(bound, MAX_SESSION_LIMIT)
 
     envelopes: List[SessionEnvelope] = []
-    for source in KNOWN_SOURCES:
+    for source in _active_sources(include_cli):
         store = _build_store(source)
         if store is None:
             continue
         try:
-            if source == SOURCE_KIROCREW_LEDGER:
+            if source in (SOURCE_KIROCREW_LEDGER, SOURCE_SHARECLI_SESSION):
                 found = store.enumerate(limit=bound)
             else:
                 found = store.enumerate()
@@ -187,28 +228,32 @@ def enumerate_sessions(
     return envelopes[:bound]
 
 
-def find_session(session_uid: Any) -> Optional[SessionEnvelope]:
+def find_session(session_uid: Any, include_cli: bool = False) -> Optional[SessionEnvelope]:
     """The envelope for one uid, or ``None``.
 
     Lookup goes through :func:`enumerate_sessions` so a found session is
     always one the list would also have shown: a ``get`` that can return an
     envelope the list hides would be a different inventory.
     """
-    if parse_session_uid(session_uid) is None:
+    if parse_session_uid(session_uid, include_cli=include_cli) is None:
         return None
-    for envelope in enumerate_sessions(limit=MAX_SESSION_LIMIT):
+    for envelope in enumerate_sessions(
+        limit=MAX_SESSION_LIMIT, include_cli=include_cli
+    ):
         if envelope.session_uid == session_uid:
             return envelope
     return None
 
 
-def inventory_summary(include_stale: bool = True) -> Dict[str, Any]:
+def inventory_summary(
+    include_stale: bool = True, include_cli: bool = False
+) -> Dict[str, Any]:
     """Counts by source, launch mode and state, plus the source roster."""
-    envelopes = enumerate_sessions(include_stale=include_stale)
+    envelopes = enumerate_sessions(include_stale=include_stale, include_cli=include_cli)
     summary = summarize(envelopes)
     summary["include_stale"] = include_stale
     summary["observed_at"] = now_iso()
-    summary["sources"] = available_sources()
+    summary["sources"] = available_sources(include_cli=include_cli)
     return summary
 
 
@@ -227,6 +272,7 @@ def _history_failure(
 def session_history(
     session_uid: Any,
     limit: int = DEFAULT_HISTORY_LIMIT,
+    include_cli: bool = False,
 ) -> Dict[str, Any]:
     """A bounded, redacted slice of one session, dispatched by uid prefix.
 
@@ -235,12 +281,12 @@ def session_history(
     store answered. ``limit`` is clamped once, here, against the shared
     :data:`~.model.MAX_HISTORY_LIMIT` ceiling.
     """
-    parsed = parse_session_uid(session_uid)
+    parsed = parse_session_uid(session_uid, include_cli=include_cli)
     if parsed is None:
         return _history_failure(
             session_uid,
             "session_uid must be '<source>:<native_session_id>' for a known "
-            "source (one of: {})".format(", ".join(KNOWN_SOURCES)),
+            "source (one of: {})".format(", ".join(_active_sources(include_cli))),
         )
     source, native_id = parsed
     window = clamp_history_limit(limit, MAX_HISTORY_LIMIT)
@@ -273,8 +319,10 @@ def session_history(
 
 
 __all__ = [
+    "CLI_SOURCES",
     "DEFAULT_HISTORY_LIMIT",
     "DEFAULT_SESSION_LIMIT",
+    "FILE_SOURCES",
     "KNOWN_SOURCES",
     "MAX_SESSION_LIMIT",
     "available_sources",

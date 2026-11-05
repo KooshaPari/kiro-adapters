@@ -71,8 +71,10 @@ from .model import (  # noqa: F401
 # every adapter below and never raises, never starts a daemon and never spawns
 # a probe process.
 from .registry import (  # noqa: F401
+    CLI_SOURCES,
     DEFAULT_HISTORY_LIMIT,
     DEFAULT_SESSION_LIMIT,
+    FILE_SOURCES,
     KNOWN_SOURCES,
     MAX_SESSION_LIMIT,
     available_sources,
@@ -93,6 +95,8 @@ __all__ = [
     "now_iso",
     "summarize",
     "MAX_HISTORY_LIMIT",
+    "CLI_SOURCES",
+    "FILE_SOURCES",
     "KNOWN_SOURCES",
     "available_sources",
     "enumerate_sessions",
