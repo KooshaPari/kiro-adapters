@@ -328,6 +328,75 @@
         "commits edcc513, 887a79b, 5d167bd, 76e3dd0"
       ],
       "notes": "Four verification attempts, all NOT PROVEN. Chain of findings, each measured: (1) ~/.kiro/crew/mcp.json is dashboard projection only - the session path never reads it (edcc513). (2) Crew's own composer DOES mount the entry: @kiro-inventory resolved and is absent from the unresolved list (docs/mcp-mount-predicate.md), so the absence is decided downstream, in the harness's own config merge. (3) The launcher died under the empty environment codex gives MCP children - 'HOME: unbound variable' - so the server never started and Crew surfaced nothing; fixed in 887a79b and verified under env -i. (4) The MCP set the agent actually reported (portal-bridge, workos-docs, node_repl, phinbox-mcp) matches ~/.codex/config.toml, so [mcp_servers.kiro-inventory] was added there (backup config.toml.bak-20261104T011421) and codex mcp list shows it enabled. (5) Still no call: a 153s turn ended with the model itself saying the server is not configured or connected, and the audit file never appeared. Instrument now in place: opt-in server-side attestation (5d167bd, KIRO_INVENTORY_AUDIT_LOG, one redacted line per call, 478 tests pass) plus that env registered in codex config (76e3dd0). A direct invocation writes {tool: agent_sources, ok: true, result_bytes: 527}, so the instrument works - the turn never reaches the server. MISSING OBSERVATION, and the next step: capture the actual session/new.mcpServers payload for one turn. Without it, whether the array omits the entry or the transport drops it is UNKNOWN. Do not claim integration on configuration. FINAL 2026-11-04T23:54Z: CODEX-SIDE DELIVERY PROVEN. Invoking codex directly (not through Crew) produced an audit line: {\"tool\": \"agent_sources\", \"ok\": true, \"result_bytes\": 527} (docs/codex-mcp-reachability.md, commit 4ca13c9). So the config entry, the env table, the launcher and the attestation all work end to end. Combined with providers/mirrors/codex.py:578 - 'Crew writes no codex file today', i.e. there is NO Crew-owned CODEX_HOME overlay - the remaining hypothesis is that Crew's session/new.mcpServers array REPLACES codex-acp's own ~/.codex config rather than merging with it, so an entry that works for plain codex never reaches a Crew session. NEXT STEP, one observation: capture that array. If it omits kiro-inventory, the fix is in Crew's projection; if it contains it, the fix is in how codex-acp merges the two."
+    },
+    {
+      "id": "P17",
+      "title": "Measure the nine consumer attach surfaces",
+      "depends_on": [
+        "P0"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "DONE",
+      "evidence": [
+        "docs/consumer-capability-matrix.md",
+        "commit f1b607a"
+      ],
+      "notes": "Bounded discovery across nine products. Ranking by evidence strength over effort: ShareCLI (#1: ships `session list`/`session inspect` and a `status --json` advertising detected agent inventory), HERDR (#2: `herdr api snapshot` over a live socket, but only covers agents HERDR itself enrolled), Orca (#3: agent-hooks/endpoint.env plus last-status.json on disk). Tracera is PARTIAL - product liveness only, a bounded search found no agent-session record. Paperclip is PARTIAL and is a diagnostic task, not an integration task: HTTP API is 403-gated and the instance is currently stopped for an unknown reason. No integration code exists for any consumer, and the doc says so."
+    },
+    {
+      "id": "P18",
+      "title": "Build the ShareCLI agent-session reader (first real consumer adapter)",
+      "depends_on": [
+        "P17"
+      ],
+      "o": 2,
+      "m": 4,
+      "p": 8,
+      "pert": 4.3,
+      "status": "NOT_RUN",
+      "evidence": [
+        "src/kiro_adapters/inventory/",
+        "docs/ADAPTER-CONTRACT.md"
+      ],
+      "notes": "Target shape: sharecli_paths.py plus sharecli_fs.py matching the existing kirocrew/herdr triples, with a DISTINCT source constant (SOURCE_SHARECLI_PROC already exists but is a process source, not a session source) wired through __init__.py. Any subprocess use must be timeout-bounded, no shell, and degrade to zero sources when the binary is absent. Tests use fixtures so ShareCLI need not be installed."
+    },
+    {
+      "id": "P19",
+      "title": "Fix the Windows boot epoch on the real host",
+      "depends_on": [
+        "P12",
+        "P11"
+      ],
+      "o": 1,
+      "m": 3,
+      "p": 6,
+      "pert": 3.2,
+      "status": "NOT_RUN",
+      "evidence": [
+        "acceptance/windows-identity-live.md",
+        "commit 4d4c373"
+      ],
+      "notes": "REFUTED ON HARDWARE: boot_id() returns `unknown` on desk, so describe_many binds 0 of 2 pids and same_process can never be True on Windows. process_start works, so the CIM read is fine - the boot epoch is the single root cause and the failure cascades. The mocked tests were all green, which is exactly why this had to run on the host. Suspects, in order: _run_capture behaviour on Windows, PowerShell stderr noise turned into a failure by the empty-stderr gate, _powershell_path resolution, the 15s cold-start timeout, or the 7-fractional-digit regex. Also 3 tests fail on Windows for a TEST-portability reason (IdentityProbe injects a POSIX-shaped start identity that the Windows gate correctly refuses) and should be made platform-correct."
+    },
+    {
+      "id": "P20",
+      "title": "Make the desk posture reversible",
+      "depends_on": [
+        "P2"
+      ],
+      "o": 1,
+      "m": 2,
+      "p": 4,
+      "pert": 2.2,
+      "status": "NOT_RUN",
+      "evidence": [
+        "scripts/install/install-kirocrew-jcode-backend.ps1",
+        "acceptance/windows-desk-backend.md"
+      ],
+      "notes": "The defect is irreversibility, not the choice: the installer runs setx and rewrites agent.acp_backend, and there is no uninstaller and no documented setx removal. Delivering uninstall-kirocrew-jcode-backend.ps1 (dry-run, backup, .NET SetEnvironmentVariable to null rather than setx), a -RevertCheck, and README-rollback.md. Recommendation recorded: fail closed on Windows via sandbox_allow_unsandboxed_exec=false and keep jcode-on-KiroCrew only where a real OS sandbox backend exists (macOS). Not executed against desk; no PowerShell on this Mac, so reviewed-only unless proven otherwise."
     }
   ],
   "carried_unknowns": [
@@ -339,7 +408,8 @@
     "Windows identity composition is validated only by synthetic tests; the boot epoch and CIM row have been confirmed on the real host, but the composed match has not been exercised there.",
     "Whether the shipped CLI flags now work in a live adoption: the fix (6800b9c) postdates the live run, so only the environment overrides are proven.",
     "The actual session/new.mcpServers payload for one turn: without it, omission-by-array vs drop-by-transport is undecidable.",
-    "Whether codex-acp MERGES session/new.mcpServers with ~/.codex/config.toml or replaces it. Codex-side delivery is proven; Crew-side is not, and this is the discriminator."
+    "Whether codex-acp MERGES session/new.mcpServers with ~/.codex/config.toml or replaces it. Codex-side delivery is proven; Crew-side is not, and this is the discriminator.",
+    "Whether codex-acp MERGES or REPLACES session/new.mcpServers with ~/.codex/config.toml - Crew's composer mounts the entry and Codex-side delivery is proven, yet a Crew turn still never calls the tool."
   ],
   "measured_host_state": {
     "gateway_service": "dev.kirocrew.gateway (launchd), healthy",
