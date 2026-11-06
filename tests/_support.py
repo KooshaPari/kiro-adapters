@@ -23,6 +23,7 @@ import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
+from unittest import mock
 
 # Result codes mirrored here so tests do not have to import the package for
 # pure-assertion helpers. Keep in sync with kiro_adapters.result.
@@ -216,3 +217,49 @@ def assert_data(result: Any, key: str, expected: Any) -> None:
     assert actual == expected, "data[{!r}] expected {!r}, got {!r}".format(
         key, expected, actual
     )
+
+
+@contextlib.contextmanager
+def no_real_stores() -> Iterator[None]:
+    """Make every registry file-source resolve to an EMPTY store.
+
+    Discovery tests are about the registry's own logic - which sources are walked,
+    which are withheld, what the envelopes look like - so they must not read the
+    operator's actual ``~/.jcode``, ``~/.kcode``, ``~/.kiro/crew`` or Orca stores.
+    Doing so made three of them take 30-38s each on a machine with thousands of
+    sessions, which turned a 60s suite into a 4-minute one and made the result
+    depend on how much history the developer happens to have.
+
+    Patches the module-level ``default_store`` the registry actually calls, so the
+    replacement is what dispatch sees rather than a copy captured at import.
+    """
+    from kiro_adapters.inventory import jcode_fs, kirocrew_fs, orca_fs
+
+    class _EmptyStore:
+        def store_path(self):
+            return None
+
+        def enumerate(self, **_kwargs):
+            return []
+
+        def list_sessions(self, **_kwargs):
+            return []
+
+        def has_session(self, *_args, **_kwargs):
+            return False
+
+        def read_session(self, *_args, **_kwargs):
+            return None
+
+    def _empty(*_args, **_kwargs):
+        return _EmptyStore()
+
+    with contextlib.ExitStack() as stack:
+        for module, name in (
+            (jcode_fs, "default_store"),
+            (jcode_fs, "kcode_store"),
+            (kirocrew_fs, "default_store"),
+            (orca_fs, "default_store"),
+        ):
+            stack.enter_context(mock.patch.object(module, name, _empty))
+        yield

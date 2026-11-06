@@ -291,54 +291,57 @@ class RegistryPlacementCase(unittest.TestCase):
         self.assertNotIn(SOURCE_HERDR_PANE, registry.FILE_SOURCES)
 
     def test_default_discovery_never_touches_herdr(self):
-        called = []
+        with S.no_real_stores():
+            called = []
 
-        def factory(**kwargs):
-            return herdr_fs.HerdrStore(
-                binary="/fake/herdr",
-                runner=lambda argv: called.append(argv) or json.dumps(_snapshot()),
-                **kwargs
-            )
+            def factory(**kwargs):
+                return herdr_fs.HerdrStore(
+                    binary="/fake/herdr",
+                    runner=lambda argv: called.append(argv) or json.dumps(_snapshot()),
+                    **kwargs
+                )
 
-        with mock.patch.object(registry.herdr_fs, "default_store", factory):
-            envelopes = registry.enumerate_sessions()
-        self.assertEqual(called, [])
-        self.assertNotIn(SOURCE_HERDR_PANE, {e.source for e in envelopes})
+            with mock.patch.object(registry.herdr_fs, "default_store", factory):
+                envelopes = registry.enumerate_sessions()
+            self.assertEqual(called, [])
+            self.assertNotIn(SOURCE_HERDR_PANE, {e.source for e in envelopes})
 
     def test_opt_in_surfaces_herdr_envelopes(self):
-        def factory(**kwargs):
-            return herdr_fs.HerdrStore(
-                binary="/fake/herdr",
-                runner=lambda argv: json.dumps(_snapshot()),
-                **kwargs
-            )
+        with S.no_real_stores():
+            def factory(**kwargs):
+                return herdr_fs.HerdrStore(
+                    binary="/fake/herdr",
+                    runner=lambda argv: json.dumps(_snapshot()),
+                    **kwargs
+                )
 
-        with mock.patch.object(registry.herdr_fs, "default_store", factory):
-            envelopes = registry.enumerate_sessions(include_cli=True)
-        herdr = [e for e in envelopes if e.source == SOURCE_HERDR_PANE]
-        self.assertEqual(len(herdr), 1)
-        self.assertEqual(herdr[0].session_uid, "herdr-pane:wA:pH")
+            with mock.patch.object(registry.herdr_fs, "default_store", factory):
+                envelopes = registry.enumerate_sessions(include_cli=True)
+            herdr = [e for e in envelopes if e.source == SOURCE_HERDR_PANE]
+            self.assertEqual(len(herdr), 1)
+            self.assertEqual(herdr[0].session_uid, "herdr-pane:wA:pH")
 
     def test_opt_in_uid_parses_and_history_is_refused(self):
-        def factory(**kwargs):
-            return herdr_fs.HerdrStore(
-                binary="/fake/herdr",
-                runner=lambda argv: json.dumps(_snapshot()),
-                **kwargs
-            )
+        with S.no_real_stores():
+            def factory(**kwargs):
+                return herdr_fs.HerdrStore(
+                    binary="/fake/herdr",
+                    runner=lambda argv: json.dumps(_snapshot()),
+                    **kwargs
+                )
 
-        with mock.patch.object(registry.herdr_fs, "default_store", factory):
-            self.assertIsNone(registry.parse_session_uid("herdr-pane:wA:pH"))
-            self.assertEqual(
-                registry.parse_session_uid("herdr-pane:wA:pH", include_cli=True),
-                (SOURCE_HERDR_PANE, "wA:pH"),
-            )
-            found = registry.find_session("herdr-pane:wA:pH", include_cli=True)
-            self.assertIsNotNone(found)
-            result = registry.session_history("herdr-pane:wA:pH", include_cli=True)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["source"], SOURCE_HERDR_PANE)
-        self.assertEqual(result["returned"], 0)
+            with mock.patch.object(registry.herdr_fs, "default_store", factory):
+                self.assertIsNone(registry.parse_session_uid("herdr-pane:wA:pH"))
+                self.assertEqual(
+                    registry.parse_session_uid("herdr-pane:wA:pH", include_cli=True),
+                    (SOURCE_HERDR_PANE, "wA:pH"),
+                )
+                found = registry.find_session("herdr-pane:wA:pH", include_cli=True)
+                self.assertIsNotNone(found)
+                result = registry.session_history("herdr-pane:wA:pH", include_cli=True)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["source"], SOURCE_HERDR_PANE)
+            self.assertEqual(result["returned"], 0)
 
     def test_unavailable_sources_reports_herdr_only_under_opt_in(self):
         names = [s["source"] for s in registry.available_sources()]
