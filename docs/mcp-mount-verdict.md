@@ -351,3 +351,42 @@ a real design decision inside it, not a one-character edit.
 
 Not applied here on purpose: this is a multi-crate Rust change with a design decision and no
 build performed. The chain is finished; the edit is not something to guess at.
+
+## Fix applied in the fork, and exactly how far it is verified
+
+`jcode-acp-native` @ `8e2e22ec5` on `fix/acp-session-list-window` (local, unpushed).
+
+```rust
+// client_lifecycle.rs, takeover/resume branch
+let target_is_live = sessions.read().await.contains_key(&target_session_id);
+if crate::session::session_exists(&target_session_id) || target_is_live {
+    ...
+    handle_subscribe(..., !target_is_live, ...)
+```
+
+Verification ladder, with the honest stopping point:
+
+| Rung | Result |
+|---|---|
+| `cargo check -p jcode-app-core` | **PASS** - exit 0, workspace clean (1m59s) |
+| `cargo build --bin jcode` | **PASS** - exit 0, `target/debug/jcode`, 348 MB |
+| Binary runs | **PASS** - `version v0.0.0-dev (e373d80ed, dirty)` |
+| **Runtime proof of the resume path** | **NOT DONE** |
+
+The last rung needs an ACP client harness: start the patched binary, persist a session,
+adopt it with a `session/load`, and observe that a configured MCP server spawns. That is
+the same class of harness as the containment work in `docs/ACP-CONTAINMENT-PLAN.md`, and it
+is not something to fake with a log line.
+
+Two cheaper observables were checked and are unavailable:
+
+- `handle_subscribe` already logs `register_mcp_tools` under `SESSION_LIFECYCLE`, which
+  would be a perfect before/after signal - but today's `~/.jcode/logs/jcode-2026-11-06.log`
+  contains no `SESSION_LIFECYCLE` lines at all, so event logging is not enabled in the
+  configuration this host runs.
+- The attestation route (`KIRO_INVENTORY_AUDIT_LOG` -> a `start` record) works and would
+  prove the MCP child spawned, but reaching it needs the same ACP harness.
+
+So: the defect is diagnosed to the line, the fix is committed, type-checks and builds, and
+the runtime assertion remains open. Stated plainly because a type-checked patch that was
+never executed is precisely the failure mode this file documents.
