@@ -59,3 +59,34 @@ process still does not spawn, the cause is downstream in `codex-acp`, not in Kir
 
 Do not read this document as "the integration is impossible" - it is "not mounted on
 this host, with seven causes eliminated".
+
+## Follow-up 2026-11-06: `tool_search` REFUTED
+
+The last untested mechanism was deferred tool exposure
+(`agent.tool_search = true`, `tool_search_min_tokens = 50000`). Tested as a controlled
+comparison, one variable, on the operator's own config:
+
+| `agent.tool_search` | turn exit | `start` records |
+|---|---|---|
+| `true` (original) | 0 | **0** |
+| `false` | 0 | **0** |
+
+**Refuted.** Deferred exposure is not the cause. The config was restored
+unconditionally by an `EXIT/INT/TERM` trap rather than by a trailing step, and the
+restore was verified by diffing the `agent` block against the pre-test backup:
+`tool_search = True`, no other keys differ.
+
+That is now eight causes eliminated: launcher, server binary, codex config, composer
+routing, registry mode, `mcp.json`-vs-spec, quarantine, and tool_search.
+
+### Process note worth keeping
+
+An earlier attempt at this same comparison flipped the key and then abandoned the run,
+leaving `tool_search = false` in the operator's live config. It was found by reading the
+file, not by any report - the worker's own summary said only that it was "now flipping
+that key". Two lessons, both already in this repository's rules and both violated here:
+
+1. A setting restored by a trailing step is not restored; it is restored *unless
+   something stops early*. Use a trap.
+2. Verify a restore by diffing against the backup, not by trusting the tool that
+   changed it.
