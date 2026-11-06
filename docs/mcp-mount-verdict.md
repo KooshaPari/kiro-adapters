@@ -126,3 +126,66 @@ to "not mounted, and here is exactly where to look next".
 through the MCP surface with real readers behind it (`docs/mcp-reachability-check.md`),
 and it works when a host spawns it - Codex does. The gap is specific to Kiro Crew's
 projection, not to the tool.
+
+## RESOLVED SCOPE 2026-11-06: Kiro Crew is correct; the fault is in codex-acp
+
+The "closing state" section above said the missing observation was the
+`session/new.mcpServers` array. **That observation is now made**, and it overturns the
+assumption behind it: Kiro Crew produces the right array, so nothing on the Crew side is
+at fault.
+
+No instrumentation was needed after all - the installed package's own pure functions can
+be called directly with its bundled interpreter:
+
+```
+$ "/Applications/KiroCrew Nightly.app/.../kirocrew-backend-arm64/bin/python3" -c \
+    "from kiro_crew.acp.session_mcp import session_mcp_servers; \
+     print([e['name'] for e in session_mcp_servers('kirocrew')])"
+['jcode-bridge', 'kiro-inventory', 'kirocrew-computer', 'kirocrew-core',
+ 'kirocrew-cron', 'kirocrew-guide', 'kirocrew-mate']
+```
+
+and after the codex mirror's narrowing, which is what actually reaches the wire:
+
+```
+['jcode-bridge', 'kiro-inventory', 'kirocrew-core', 'kirocrew-cron']
+kiro-inventory survived: True
+```
+
+The mirror withheld only `kirocrew-computer`, `kirocrew-guide` and `kirocrew-mate`, with
+a logged reason (per-tool restriction with no deny channel, or a Crew-bound session
+identity). `kiro-inventory` is not in that category and is emitted with the exact shape
+intended: command `/Users/kooshapari/bin/kiro-adapter-mcp`, args `["--inventory-only"]`,
+type `stdio`.
+
+### What this eliminates and what it leaves
+
+Nine causes are now excluded: the eight configuration causes listed earlier, **plus
+KiroCrew's own projection, composer and mirror**. The array is correct.
+
+**The defect is therefore inside `codex-acp`.** It receives four well-formed stdio
+entries and launches none of them, while the servers the agent actually reported
+(`node_repl`, `workos-docs`, `phinbox-mcp`, `portal-bridge`) are exactly the ones in
+`~/.codex/config.toml`. The consistent reading is that `codex-acp` builds its MCP set from
+its own config file and does not mount the per-session array - but that is now a
+*testable claim about codex-acp*, not a guess about Crew.
+
+### Next step, now cheap and non-invasive
+
+`codex-acp` is a plain Node package (`~/.bun/install/global/node_modules/@agentclientprotocol/codex-acp/dist/index.js`),
+not an opaque binary. Two options, neither of which touches Crew:
+
+1. Read its `session/new` handler for what it does with `mcpServers` - a source read, no
+   execution, no config change.
+2. Set `CODEX_HOME` to a scratch directory containing a config with a marker server, and
+   observe whether a Crew turn mounts the array entry, the config entry, or both. This
+   finally settles merge-vs-replace.
+
+Option 1 first: it is free and decisive if the handler is readable.
+
+### Correction to the earlier section
+
+The "three remaining options" table above (wrap the real binary, patch the fork, enable
+Codex verbose logging) was written on the assumption that the payload was unknown. It is
+known now, so the cheapest path is a source read of `codex-acp`, and none of the three
+invasive options is required to reach a conclusion.
