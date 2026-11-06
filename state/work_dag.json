@@ -318,7 +318,7 @@
       "m": 2,
       "p": 4,
       "pert": 2.2,
-      "status": "UNKNOWN",
+      "status": "BLOCKED_OPERATOR",
       "evidence": [
         "docs/mcp-connect-diagnosis.md",
         "docs/mcp-mount-predicate.md",
@@ -327,7 +327,7 @@
         "docs/mcp-server-attestation-proof.md",
         "commits edcc513, 887a79b, 5d167bd, 76e3dd0"
       ],
-      "notes": "Four verification attempts, all NOT PROVEN. Chain of findings, each measured: (1) ~/.kiro/crew/mcp.json is dashboard projection only - the session path never reads it (edcc513). (2) Crew's own composer DOES mount the entry: @kiro-inventory resolved and is absent from the unresolved list (docs/mcp-mount-predicate.md), so the absence is decided downstream, in the harness's own config merge. (3) The launcher died under the empty environment codex gives MCP children - 'HOME: unbound variable' - so the server never started and Crew surfaced nothing; fixed in 887a79b and verified under env -i. (4) The MCP set the agent actually reported (portal-bridge, workos-docs, node_repl, phinbox-mcp) matches ~/.codex/config.toml, so [mcp_servers.kiro-inventory] was added there (backup config.toml.bak-20261104T011421) and codex mcp list shows it enabled. (5) Still no call: a 153s turn ended with the model itself saying the server is not configured or connected, and the audit file never appeared. Instrument now in place: opt-in server-side attestation (5d167bd, KIRO_INVENTORY_AUDIT_LOG, one redacted line per call, 478 tests pass) plus that env registered in codex config (76e3dd0). A direct invocation writes {tool: agent_sources, ok: true, result_bytes: 527}, so the instrument works - the turn never reaches the server. MISSING OBSERVATION, and the next step: capture the actual session/new.mcpServers payload for one turn. Without it, whether the array omits the entry or the transport drops it is UNKNOWN. Do not claim integration on configuration. FINAL 2026-11-04T23:54Z: CODEX-SIDE DELIVERY PROVEN. Invoking codex directly (not through Crew) produced an audit line: {\"tool\": \"agent_sources\", \"ok\": true, \"result_bytes\": 527} (docs/codex-mcp-reachability.md, commit 4ca13c9). So the config entry, the env table, the launcher and the attestation all work end to end. Combined with providers/mirrors/codex.py:578 - 'Crew writes no codex file today', i.e. there is NO Crew-owned CODEX_HOME overlay - the remaining hypothesis is that Crew's session/new.mcpServers array REPLACES codex-acp's own ~/.codex config rather than merging with it, so an entry that works for plain codex never reaches a Crew session. NEXT STEP, one observation: capture that array. If it omits kiro-inventory, the fix is in Crew's projection; if it contains it, the fix is in how codex-acp merges the two."
+      "notes": "Four verification attempts, all NOT PROVEN. Chain of findings, each measured: (1) ~/.kiro/crew/mcp.json is dashboard projection only - the session path never reads it (edcc513). (2) Crew's own composer DOES mount the entry: @kiro-inventory resolved and is absent from the unresolved list (docs/mcp-mount-predicate.md), so the absence is decided downstream, in the harness's own config merge. (3) The launcher died under the empty environment codex gives MCP children - 'HOME: unbound variable' - so the server never started and Crew surfaced nothing; fixed in 887a79b and verified under env -i. (4) The MCP set the agent actually reported (portal-bridge, workos-docs, node_repl, phinbox-mcp) matches ~/.codex/config.toml, so [mcp_servers.kiro-inventory] was added there (backup config.toml.bak-20261104T011421) and codex mcp list shows it enabled. (5) Still no call: a 153s turn ended with the model itself saying the server is not configured or connected, and the audit file never appeared. Instrument now in place: opt-in server-side attestation (5d167bd, KIRO_INVENTORY_AUDIT_LOG, one redacted line per call, 478 tests pass) plus that env registered in codex config (76e3dd0). A direct invocation writes {tool: agent_sources, ok: true, result_bytes: 527}, so the instrument works - the turn never reaches the server. MISSING OBSERVATION, and the next step: capture the actual session/new.mcpServers payload for one turn. Without it, whether the array omits the entry or the transport drops it is UNKNOWN. Do not claim integration on configuration. FINAL 2026-11-04T23:54Z: CODEX-SIDE DELIVERY PROVEN. Invoking codex directly (not through Crew) produced an audit line: {\"tool\": \"agent_sources\", \"ok\": true, \"result_bytes\": 527} (docs/codex-mcp-reachability.md, commit 4ca13c9). So the config entry, the env table, the launcher and the attestation all work end to end. Combined with providers/mirrors/codex.py:578 - 'Crew writes no codex file today', i.e. there is NO Crew-owned CODEX_HOME overlay - the remaining hypothesis is that Crew's session/new.mcpServers array REPLACES codex-acp's own ~/.codex config rather than merging with it, so an entry that works for plain codex never reaches a Crew session. NEXT STEP, one observation: capture that array. If it omits kiro-inventory, the fix is in Crew's projection; if it contains it, the fix is in how codex-acp merges the two. ANSWERED 2026-11-06: the server is NOT MOUNTED - a `start` attestation record never appears while Codex spawns it fine. Eight causes eliminated. The remaining observation (the session/new.mcpServers array) requires instrumentation that is not read-only, so it now waits on an operator decision; see docs/mcp-mount-verdict.md closing state."
     },
     {
       "id": "P17",
@@ -356,12 +356,14 @@
       "m": 4,
       "p": 8,
       "pert": 4.3,
-      "status": "NOT_RUN",
+      "status": "DONE",
       "evidence": [
-        "src/kiro_adapters/inventory/",
-        "docs/ADAPTER-CONTRACT.md"
+        "src/kiro_adapters/inventory/sharecli_paths.py",
+        "src/kiro_adapters/inventory/sharecli_fs.py",
+        "tests/test_inventory_sharecli.py",
+        "commits ae3effc, d2702a1, 8336f79"
       ],
-      "notes": "Target shape: sharecli_paths.py plus sharecli_fs.py matching the existing kirocrew/herdr triples, with a DISTINCT source constant (SOURCE_SHARECLI_PROC already exists but is a process source, not a session source) wired through __init__.py. Any subprocess use must be timeout-bounded, no shell, and degrade to zero sources when the binary is absent. Tests use fixtures so ShareCLI need not be installed."
+      "notes": "CLOSED. `sharecli session list` emits a JSON ARRAY by default (--json is not a valid flag on that verb); descriptors carry confidence/cwd/harness/id/resume/session_id/state. Reader is sharecli_paths.py plus sharecli_fs.py with SOURCE_SHARECLI_SESSION, projected through a whitelist so resume.argv never leaves the store, timeout-clamped, 1 MiB stdout ceiling, 500-record ceiling, fail-closed to zero on missing binary/timeout/malformed JSON/non-array/id-less entries. 18 fixture tests. Verified black-box reachable: absent by default, present only with KIRO_INVENTORY_ALLOW_CLI_SOURCES (8336f79). Could NOT prove: any transcript surface (its verbs return a descriptor, not turns), and liveness (no pid in the descriptor)."
     },
     {
       "id": "P19",
@@ -391,12 +393,13 @@
       "m": 2,
       "p": 4,
       "pert": 2.2,
-      "status": "NOT_RUN",
+      "status": "DONE",
       "evidence": [
-        "scripts/install/install-kirocrew-jcode-backend.ps1",
-        "acceptance/windows-desk-backend.md"
+        "scripts/install/uninstall-kirocrew-jcode-backend.ps1",
+        "scripts/install/README-rollback.md",
+        "commit 57f1421"
       ],
-      "notes": "The defect is irreversibility, not the choice: the installer runs setx and rewrites agent.acp_backend, and there is no uninstaller and no documented setx removal. Delivering uninstall-kirocrew-jcode-backend.ps1 (dry-run, backup, .NET SetEnvironmentVariable to null rather than setx), a -RevertCheck, and README-rollback.md. Recommendation recorded: fail closed on Windows via sandbox_allow_unsandboxed_exec=false and keep jcode-on-KiroCrew only where a real OS sandbox backend exists (macOS). Not executed against desk; no PowerShell on this Mac, so reviewed-only unless proven otherwise."
+      "notes": "DELIVERED, REVIEWED ONLY - NEVER EXECUTED. uninstall-kirocrew-jcode-backend.ps1 restores config from the OLDEST .bak-*-jcode backup (newest-wins would ratchet the config forward one backup per cycle), REMOVES acp_backend rather than nulling it when the backup shows it absent, writes a .bak-*-uninstall copy before restoring, and clears variables with [Environment]::SetEnvironmentVariable(name,$null,'User') because setx cannot delete - `setx NAME \"\"` leaves an empty string that still reads as present, which is the likeliest false 'it worked'. README-rollback.md states the three options and the recommendation (fail closed on Windows). No PowerShell on this host, so neither the script nor -DryRun has ever run; the README names the five constructs to check first."
     }
   ],
   "carried_unknowns": [
