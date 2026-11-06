@@ -90,3 +90,39 @@ that key". Two lessons, both already in this repository's rules and both violate
    something stops early*. Use a trap.
 2. Verify a restore by diffing against the backup, not by trusting the tool that
    changed it.
+
+## Closing state 2026-11-06: why this stops here rather than going further
+
+The mount question is answered (not mounted) and eight causes are eliminated. The one
+remaining observation - the actual `session/new.mcpServers` array - now requires
+instrumentation that is not mine to add unilaterally, and that is worth stating plainly
+rather than leaving the item looking merely unfinished.
+
+**The obvious tap does not work.** The natural place to intercept the ACP traffic is the
+binary override, and `~/.kiro/crew/.env` already contains:
+
+```
+CODEX_ACP_BIN=/Users/kooshapari/bin/jcode-acp-shim
+```
+
+Yet the live spawn executed the **genuine** `~/.bun/bin/codex-acp`, not the shim. So
+pointing that override at a logging wrapper would prove nothing: the override is not on
+the path Crew actually uses for this backend. This is the same `codex`-spawn-path
+question recorded in `acceptance/codex-spawn-path-trace.md`.
+
+**The remaining options, and why each needs a decision:**
+
+| Option | What it costs |
+|---|---|
+| Wrap the real `~/.bun/bin/codex-acp` (a symlink to a global npm install) | Modifies a shared toolchain outside this repo; a bad wrapper breaks every Codex use on this machine, not just Crew's |
+| Patch the fork to log inbound `session/new` params | A daemon change, i.e. the same class of work as item 2 - needs the same go/no-go |
+| Watch `session/new` from the Codex side by enabling its own verbose logging | Unverified that codex-acp logs params at any level; would be one config change plus one turn to find out |
+
+None of these is a read-only observation, which is why the previous eight causes were
+worth eliminating first: each was free, and together they moved the item from "unknown"
+to "not mounted, and here is exactly where to look next".
+
+**What is NOT blocked by this.** The inventory tool is proven reachable and correct
+through the MCP surface with real readers behind it (`docs/mcp-reachability-check.md`),
+and it works when a host spawns it - Codex does. The gap is specific to Kiro Crew's
+projection, not to the tool.
