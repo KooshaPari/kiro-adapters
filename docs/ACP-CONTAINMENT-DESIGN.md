@@ -38,7 +38,8 @@ a tool-allowlist or permission policy into the front end at all.
 
 ### 2.2 The front end's notification surface (outbound, server -> client)
 
-The front end emits only `session/update` notifications, in three shapes:
+`run_prompt` itself emits only three shapes of `session/update` (the
+per-session pump emits a fourth, tool notifications, in §2.3):
 
 - agent message chunks (`acp.rs:1021-1028`),
 - `usage_update` (`acp.rs:1086-1097`),
@@ -49,7 +50,7 @@ handles only `Ack`, `Done`, `Interrupted`, `Error`, `TokenUsage`,
 `ModelChanged`, and discards every other daemon event with `_ => {}`
 (`acp.rs:1131`).
 
-### 2.3 The tool-lifecycle mapper is dead code
+### 2.3 The tool-lifecycle mapper is wired, but carries no permission
 
 `map_event` (`acp.rs:1547-1664`) **does** translate daemon tool events into
 `session/update` notifications with `sessionUpdate: "tool_call"` /
@@ -59,16 +60,37 @@ handles only `Ack`, `Done`, `Interrupted`, `Error`, `TokenUsage`,
 - `ToolExec` -> `status: "in_progress"` (`acp.rs:1579-1596`),
 - `ToolDone` -> `status: "completed"` / `"failed"` (`acp.rs:1598-1620`).
 
-Two facts kill this as a containment surface:
+Two facts bound what this can and cannot do as a containment surface:
 
-1. **It is not wired.** `map_event` is referenced only by its definition and
-   one unit test, `event_mapper_maps_tool_lifecycle` (`acp.rs:2065-2089`).
-   `run_prompt` never calls it, so the live prompt path emits **no** tool
-   notifications to the client.
-2. **Even wired, it carries no permission.** The state machine is
+1. **It is wired, just not through `run_prompt`.** `run_prompt` never calls
+   `map_event`; the per-session event pump does. `register_session`
+   (`src/cli/acp/live.rs:20`) spawns a task that, for every daemon
+   `ServerEvent`, runs `mapper.map_event(event.clone())`
+   (`live.rs:106`) and writes each result as a `session/update`
+   notification via `write_notification` (`live.rs:107-113`). That pump is
+   installed for every attached session: `session/new` (`acp.rs:456`) and
+   `session/load` / `session/resume` (`acp.rs:520`) both call
+   `register_session`, and `session/prompt` (`acp.rs:386`) runs on the same
+   runtime, so tool `session/update` notifications do reach the client
+   concurrently with a live prompt.
+2. **It carries no permission.** The state machine is
    `pending -> in_progress -> completed/failed` with no "awaiting approval"
    state and no `request_permission` notification. By the time the shim could
    see `ToolExec`, the tool has already executed inside the daemon.
+
+Observation is therefore real, but observation is not enforcement: the client
+receives state notifications with no approval round-trip. The shim's `-32012`
+prompt refusal remains the only genuine containment.
+
+**Recommended insertion point for an approval gate:** the pipeline emits
+`ToolStart` and `ToolExec` as *separate* `ServerEvent`s — see the mapper arms
+at `acp.rs:1551` (`ToolStart`) and `acp.rs:1579` (`ToolExec`), and the
+corresponding JSON-line arms at `src/cli/commands.rs:3155` (`tool_start`) and
+`commands.rs:3163` (`tool_exec`). That ordering gives a real "announced but
+not yet executing" window: a bridge can default-DENY on the `pending`
+notification and release the gate before the daemon emits `ToolExec`. It does
+not exist as an approval state today, so adding one there (rather than
+re-plumbing `map_event`) is the smallest honest change.
 
 ### 2.4 Where tool authority actually lives
 
@@ -109,7 +131,11 @@ The recommended concrete daemon change, scoped for a follow-up:
 2. Expose a `toolAllowlist` / permission-policy parameter on `session/load` and
    `session/prompt`, enforced in the daemon's tool path alongside
    `require_interaction_ownership`.
-3. Wire `map_event` into `run_prompt` so tool lifecycle is observable.
+3. Insert the approval gate in the existing `ToolStart -> ToolExec` window.
+   The pump already notifies the client at `pending` before the daemon emits
+   `ToolExec`; the change is to make that window *blocking* (hold `ToolExec`
+   until the client approves), not to make tool lifecycle observable — it
+   already is (`live.rs:106-113`).
 
 Only after (1)-(3) land can the shim bridge the permission model described in
 `docs/KAS-VS-JCODE.md:27` and translate (not passthrough) Crew's narrowed
@@ -122,9 +148,10 @@ permission-request notifications to the ACP client and default-DENY tool calls
 the client does not approve") is not implementable on the shim:
 
 - The front end emits **no** permission-request notification (§2.2, §2.3).
-- The only tool notifications the front end *can* emit (`map_event`) are not
-  wired into the live prompt path, and even if they were, they carry no
-  approval state — the tool has already run by the time the shim could react.
+- The front end does emit tool notifications (`map_event`, via the
+  per-session pump at `live.rs:106-113`), but they carry no approval state
+  and no round-trip: the only window is the `ToolStart -> ToolExec` gap, which
+  nothing waits on today.
 
 Implementing the candidate would therefore fake enforcement against a signal
 that never arrives, and could only be satisfied by weakening the existing
