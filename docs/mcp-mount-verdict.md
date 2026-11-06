@@ -292,3 +292,62 @@ A blind patch in a multi-crate Rust workspace, unbuilt, would be exactly the fai
 this whole investigation has been documenting: a change that looks correct in the diff and
 was never observed to work. The value delivered here is the chain and the entry point, and
 they are worth more than an unverified diff.
+
+## ROOT CAUSE FOUND 2026-11-06: a resumed session skips MCP registration
+
+This is the answer, with line numbers. `jcode` registers MCP per **subscribe**, and the
+flag differs by which subscribe path runs:
+
+| Site | Path | `register_mcp_tools` |
+|---|---|---|
+| `crates/jcode-app-core/src/server/client_lifecycle.rs:1655` | takeover / resume, guarded by `client_session_id == target_session_id` | **`false`** |
+| `:1694` | ordinary subscribe | `true` |
+| `:1730` | ordinary subscribe | `true` |
+
+`handle_subscribe` (`crates/jcode-app-core/src/server/client_session.rs:593`) only calls
+`registry.register_mcp_tools_for_dir(...)` when that flag is true (`:810-845`). So:
+
+- a **fresh** jcode session registers MCP and gets the `mcp__*` tools;
+- a session reached by **`session/load` / resume** - which is exactly what the adoption
+  shim does, and exactly what a Kiro Crew turn does - takes the `false` branch and
+  registers **nothing**.
+
+That single asymmetry explains every observation in this file: the array is correct,
+`~/.jcode/mcp.json` is correct and serves 14 tools, and the tools are still absent from
+the session, with no error anywhere.
+
+### Why this is almost certainly unintentional
+
+The `false` is passed at the one site where `client_session_id` has just been bound to
+`target_session_id`. The plausible original reason is **avoidance of double registration**
+when taking over a session that is already live and already has MCP. But that reasoning
+does not hold for the case we exercise: a persisted session that is being *loaded* by a new
+client, with no live owner and therefore no prior registration. The two cases were collapsed
+into one flag value.
+
+### Correct fix, and the trap in the obvious version
+
+The naive change - flip `false` to `true` at `:1655` - would double-register MCP tools for a
+genuinely live takeover, which is the defect the `false` was presumably avoiding (duplicate
+tool names, or a second connection to every MCP server).
+
+The fix must distinguish the two cases at that site:
+
+- **target session is live and already has an owner** -> keep `false` (its registration stands);
+- **target session is being loaded with no live owner** -> register, i.e. `true`.
+
+The discriminating condition needs one variable the site does not currently compute - a
+"was this target live before I bound to it" check - which is why this is a small change with
+a real design decision inside it, not a one-character edit.
+
+### Verification plan for whoever lands it
+
+1. Apply the conditional at `client_lifecycle.rs:1655`.
+2. `cargo build` (workspace; expect it to be slow - this is the only honest way to know).
+3. Re-run the Crew turn used throughout this file: `kirocrew chat --agent kirocrew -m
+   "Call the MCP tool agent_sources ..."` and check for a real payload instead of
+   `TOOL_UNAVAILABLE`.
+4. Negative control: a live takeover must still show exactly one registration, not two.
+
+Not applied here on purpose: this is a multi-crate Rust change with a design decision and no
+build performed. The chain is finished; the edit is not something to guess at.
