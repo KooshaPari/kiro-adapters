@@ -390,3 +390,50 @@ Two cheaper observables were checked and are unavailable:
 So: the defect is diagnosed to the line, the fix is committed, type-checks and builds, and
 the runtime assertion remains open. Stated plainly because a type-checked patch that was
 never executed is precisely the failure mode this file documents.
+
+## RUNTIME PROOF 2026-11-06: the fix is confirmed by A/B
+
+The last rung is done. `acceptance/mcp_resume_harness.py` tests the resume path directly
+instead of inferring it: it starts a daemon on a private scratch socket, sends a `subscribe`
+whose `target_session_id` names a session that exists **only on disk**, and watches whether a
+configured MCP server is actually launched. The observable is the inventory server's own
+`start` attestation record.
+
+Both cases used the identical session id, request, socket pattern and audit file; the only
+difference is the binary:
+
+| Binary | MCP spawned on resume |
+|---|---|
+| pinned `~/.jcode/builds/versions/0.99.1-kcode-mode/jcode` | **False** |
+| patched `target/debug/jcode` (from `8e2e22ec5`) | **True** |
+
+Record from the patched run:
+
+```json
+{"ts": "2026-11-06T23:03:21.341101+00:00", "event": "start", "pid": 30361,
+ "mode": "None", "argv": []}
+```
+
+That is the `kiro` server from `~/.jcode/mcp.json` (its spec has `args: []`), launched
+because the resumed session finally registered MCP.
+
+### What this does and does not prove
+
+- **Proved:** a disk-only resumed session registers MCP only with the patch. The hardcoded
+  `false` was the cause, and `!target_is_live` fixes it.
+- **Proved:** the live takeover case still passes `false`, because the discriminator is
+  `sessions.contains_key(target)` - the protection against double registration is intact.
+  (Asserted from the code path, not from a separate takeover run.)
+- **Not proved:** that a Kiro Crew turn now surfaces `agent_sources` end to end. That needs
+  the patched binary installed over the pinned build, which is a toolchain change. The
+  harness is the gate for the code; installing is the remaining operator step.
+
+### Reproducing
+
+```
+python3 acceptance/mcp_resume_harness.py     # exit 0 == fix confirmed, 1 == inconclusive, 2 == not confirmed
+```
+
+It starts and signals only its own daemons, uses a private socket per case, deletes stale
+sockets, and redirects nothing else. `HOME` is deliberately NOT redirected: the resume path
+needs the real session store, and it is only read.
