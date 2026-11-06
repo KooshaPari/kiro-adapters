@@ -437,3 +437,55 @@ python3 acceptance/mcp_resume_harness.py     # exit 0 == fix confirmed, 1 == inc
 It starts and signals only its own daemons, uses a private socket per case, deletes stale
 sockets, and redirects nothing else. `HOME` is deliberately NOT redirected: the resume path
 needs the real session store, and it is only read.
+
+## Ported to the version that actually runs (v0.99.1)
+
+The first patch was against `0.85.1-k1.1.1`, which is **not** the source of the installed
+binary. Pointing a 0.99.1 daemon at an 0.85 client fails with
+`Interaction ownership failed: No such file or directory` - a version mismatch, not the fix.
+
+`v0.99.1` carries the **identical asymmetry**: the takeover/resume subscribe passes a
+constant `false`, the two ordinary sites pass `true`. So the same `!target_is_live`
+discriminator ports directly, computed from the guard that was already there.
+Branch `fix/acp-resume-mcp-0991`, commit `4e009976e`.
+
+### A/B on v0.99.1, same session, same request, only the binary differing
+
+| Binary | MCP log lines during resume |
+|---|---|
+| pinned `0.99.1-kcode-mode` | **0** |
+| patched `v0.99.1` + fix | **1** (`MCP: Loaded 6 server(s) live from Claude Code`) |
+
+Important for anyone repeating this: at 0.99.1 MCP is registered but **connected lazily**,
+so the spawned-child attestation does not fire until a tool is called. The daemon log is
+the right observable at this version; at 0.85 the child spawned eagerly and the attestation
+worked. Two versions, two observables - which is why the earlier 0.99.1 harness run looked
+like a failure when registration had in fact succeeded.
+
+### Remaining blocker, precisely
+
+End-to-end through Kiro Crew fails at a **different** gate, and it fails correctly:
+
+```
+AcpToolGateUnroutable: session/new did not advertise config option 'mode' ...
+Install a OpenAI Codex adapter that advertises ACP session config option 'mode'
+with value 'read-only'.
+```
+
+Vanilla `v0.99.1` does not advertise `mode`; the installed binary is a **`kcode-mode`**
+variant that does. Crew refuses to route tool calls through a backend whose gate it cannot
+arm - which is the fail-closed behaviour this whole investigation has been arguing for.
+
+That variant's source was not located in this repository (no `kcode-mode` tag; the branches
+containing `kcode` concern binaries, paths and prefixes, not the mode advertisement). So the
+final step needs wherever `kcode-mode` is built from, which is a question for the operator
+rather than something to guess at.
+
+### Where this leaves it
+
+- **Proved:** the resume path skipped MCP registration; `!target_is_live` fixes it, on the
+  version that runs.
+- **Proved:** the live-takeover case still passes `false`, so double registration is still
+  prevented.
+- **Blocked:** a Crew turn cannot exercise it until a `kcode-mode` build carries the patch,
+  because vanilla v0.99.1 is refused at the `mode` gate before any tool runs.
