@@ -61,14 +61,42 @@ living in whatever harness the bridge wakes. Any claim that Discord *runs* agent
 Runner-up worth naming: **Paperclip** has an HTTP API, but it is 403-gated and currently stopped for an
 unknown reason, so it is the first *diagnostic* task, not the first *integration* task.
 
-## Explicit non-claims
+## 2026-11-05 — OmniRoute and Discord (last two consumers)
 
-- No adapter, bridge, broker, or consumer integration was written or modified for any of the nine.
-- "ATTACHABLE" means a surface is documented and reachable in principle. It does not mean this session
-  called it, authenticated to it, or verified a response shape.
-- Nothing here reclassifies any product's authority: Tracera = product, AgilePlus = acceptance,
-  Paperclip = presentation, Discord = comms, HERDR = host session/terminal ops, ShareCLI =
-  discovery/recovery, OmniRoute = routing/usage.
+Scope: read-only. No service started, restarted, stopped, killed, or authenticated; no token,
+username, or message content printed. Searches bounded to `command -v`, `~/.config/omniroute*`
+(maxdepth 3), `/opt/homebrew/lib/node_modules/@kooshapari/omniroute` (targeted file reads only),
+`~/.config/discord-bridge` (maxdepth 2), `~/CodeProjects/Phenotype/repos/PhenoBot` (package.json +
+bridge/*.mjs targeted reads), and `~/Library/Application Support/discord`. No whole-disk scan.
+
+| target | installed/running | surface | evidence (file:line / `--help`) | class | smallest useful next step |
+|---|---|---|---|---|---|
+| **OmniRoute** | installed — `/opt/homebrew/bin/omniroute`; `/Applications/OmniRoute.app`; state `~/.config/omniroute.bak-1788582647/` (`storage.sqlite`, `server.env`, `logs/application/app.log`). **Not running** — no process, no LISTEN port. | Stateless completion router + auth/dashboard sessions + A2A task records + conversational memory + cloud-agent remote tasks. | `omniroute --help` → `serve`/`chat`/`stream`/`simulate` (routing); `sessions list --help` → `--kind <k>` choices `dashboard\|api-key\|mcp\|a2a` and fields `id/user/kind/createdAt/expiresAt/lastSeen/ip/userAgent` (HTTP auth sessions, not agent sessions); `a2a tasks` (create/list/get/cancel/watch/stream/logs) are A2A protocol tasks; `memory` (FTS5+vector) is conversational memory; `cloud` targets remote codex/devin/jules. `open-sse/services/sessionManager.ts` is an in-memory sticky-routing fingerprint store (`getSessionConnection`, `SESSION_TTL_MS`). | **PARTIAL → closed negative on agent-session state.** OmniRoute persists no record naming a running harness agent session; its "sessions" are login/dashboard/API-key/MCP/A2A auth sessions, and routing a completion is not an agent session. | Keep OmniRoute as **routing/usage telemetry only** (`status`, `usage`, `cost`, `quota`); remove it from the agent-session target list. Do not re-open as a session surface unless a new route lands that names a harness agent. |
+| **Discord** | desktop app data — `~/Library/Application Support/discord`; no `discord` binary on PATH. Bridge daemon **running** — pid `66680` (`/opt/homebrew/bin/node …/PhenoBot/bridge/main.mjs`, ppid 1, up ~1 day); `bridge.sock` live (mtime 2026-11-04), `bridge.lock` holds that pid, `watchdog-state.json` → `{"healthy":true,...}`. | **Sink (outbound + inbound wake):** multi-bot Discord gateway (discord.js ^14.26.0) that posts to `postChannels` and wakes external harness agents via `agent-wake.mjs`. **Not an agent runtime.** | `bridge.json` keys (values redacted): `guildId, defaultAgent, allowedUserIds, routes, server, agents, watchedChannels, noMentionDefault, aliases, feedback, postChannels, wake`. `agents` = 11 bot identities, each `{id, tokenEnv}` where `tokenEnv` ∈ `DISCORD_BOT_TOKEN_*` (names only). `routes = {}` (empty). `postChannels` = 10 channel IDs (outbound targets). `watchedChannels` = 2 (inbound). `wake-sessions.json` maps agent id → harness session id (e.g. `"Instinct": "session_rat_…"`, `"Hermes": "session_piglet_…"`). `bridge/gateway.mjs:1` imports `discord.js`; `bridge/agent-wake.mjs` spawns an external agent cmd (`jcode run --json`) with `--resume <session_id>` from `wake-sessions.json`. | **Discord = comms + wake trigger; NOT an agent runtime.** Sink claim **confirmed** (running bridge, 10 postChannels, feedback key, 11 bot tokens, healthy watchdog). Runtime claim **refuted** (no agent process owned by Discord; `routes={}`; bridge only wakes external harnesses and persists their session ids). | Use Discord as the **outbound notification sink** for inventory events (post to `postChannels`); treat inbound as a wake trigger only. Do not count Discord as a session host. |
+
+### Verdicts
+
+- **OmniRoute — stateless router, not a session surface.** Its "sessions" are HTTP auth/dashboard sessions
+  (`kind ∈ {dashboard, api-key, mcp, a2a}`), and its A2A tasks and conversational memory are not
+  harness agent sessions. Routing a completion is not an agent session, so the PARTIAL row is now a
+  **closed negative**. OmniRoute leaves the agent-session target list; it remains routing/usage
+  telemetry authority only.
+- **Discord — sink yes, runtime no (confirmed).** The bridge is a live outbound sink (10 post channels,
+  11 bot identities, healthy watchdog) plus an inbound wake trigger that resumes external harness
+  sessions stored in `wake-sessions.json`. It hosts no agent process and owns no session store of its
+  own. Discord leaves the agent-session target list as a *session surface* but stays on the list as
+  the comms/wake sink.
+
+### Agent-session target list after this pass
+
+Removed from the agent-session lane: **Tracera** (closed negative, 2026-11-05), **OmniRoute**
+(closed negative, this pass), **Discord** (sink only, this pass). Remaining session-surface
+candidates: **HERDR**, **ShareCLI**, **Orca**, **Paperclip** (live, auth-gated, shape unverified),
+**AgilePlus** (delivery state, not live sessions), **Khostty** (display only).
+
+Explicit non-claims (unchanged): no adapter, bridge, broker, or consumer integration was written or
+modified; no Discord bot token, guild id, user id, or channel id value was printed; no OmniRoute or
+Discord process was started, restarted, stopped, killed, or authenticated.
 
 ## 2026-11-05 — settling the two PARTIAL rows (Tracera, Paperclip)
 
