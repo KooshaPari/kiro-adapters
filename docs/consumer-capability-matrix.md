@@ -69,3 +69,26 @@ unknown reason, so it is the first *diagnostic* task, not the first *integration
 - Nothing here reclassifies any product's authority: Tracera = product, AgilePlus = acceptance,
   Paperclip = presentation, Discord = comms, HERDR = host session/terminal ops, ShareCLI =
   discovery/recovery, OmniRoute = routing/usage.
+
+## 2026-11-05 — settling the two PARTIAL rows (Tracera, Paperclip)
+
+Scope: read-only. No service started, restarted, stopped, killed, or authenticated; no token,
+username, or message content printed. Searches bounded to `~/CodeProjects/Tracera/{api,apps,crates,src}`
+and `~/.paperclip/{cli/current/node_modules,instances/default/logs}`. This section supersedes the
+`class` and `smallest useful next step` cells for these two rows only.
+
+| product | new evidence (file:line / log line) | updated class | smallest useful next step |
+|---|---|---|---|
+| **Tracera** | The only session-shaped routes are stubs: `crates/tracera-server/src/router.rs:327-333` registers `/api/v1/projects/{project_id}/codex/sessions` and `.../sessions/{session_id}` as `any(not_implemented)`. `crates/tracera-server/src/routes/codex.rs:1-2` states outright: *"No corresponding domain repository methods or SQLite tables exist."* `not_implemented.rs:19-28` returns `501` with header `x-tracera-not-implemented: true`. Every other `session_id` hit is a synthetic benchmark fixture under `crates/tracera-server/testdata/` (e.g. `agentora-mlx-benchmark-run.json:1`, envelopes `ses_*`/`run_*`/`att_*`). A repo-indexed search for `sessions` tables across `alembic/` and `crates/tracera-server/src` matched `router.rs` only. | **PARTIAL → closed negative on agent-session state.** Proven: Tracera persists no record naming a running agent session. It remains a product-liveness surface (`status`/`logs`/`doctor`/`/health`/`/ready`). | Remove Tracera from the session-inventory lane entirely; keep it as product liveness + log tail only. Do not re-open unless `routes/codex.rs` grows a repository + migration. |
+| **Paperclip** | (a) It is **running**, contrary to the row above: `instances/default/runtime-info.json` → `pid 89217`, `127.0.0.1:3180`, `startedAt 2026-11-04T01:24:41Z`; confirmed by `lsof -nP -iTCP:3180 -sTCP:LISTEN` (node, pid 89217) and `GET /health 200` at 17:04:46 in `logs/service.log`. (b) Stop cause is recorded: `logs/service.log` last shutdown block → `graceful heartbeat run drain complete {"signal":"SIGTERM","drain":{"interrupted":0,...}}` then `plugin job scheduler stopped` / `Stopping embedded PostgreSQL {"signal":"SIGTERM"}` — an **external SIGTERM**, graceful, zero interrupted runs, followed by a fresh startup banner. Preceding DB instability is separately logged as postgres `FATAL` "postmaster has commanded this server process to roll back ... another server process exited abnormally and possibly corrupted shared memory" (`service.log:15399-15498`, `:535807`). (c) The 403 is auth gating, not failure: `GET /api/health 403` appears alongside `GET /health 200` in the same interval. (d) Session-shaped endpoints do exist in the bundled route table (`cli/current/node_modules`): `/agents`, `/agents/:id`, `/agents/:id/runtime-state`, `/agents/:id/runtime-state/reset-session`, `/agents/:id/task-sessions`, `/agents/:id/heartbeat/invoke`, `/agents/:id/pause`, `/agents/:id/terminate`. | **PARTIAL (upgraded specificity): live process + a session-adjacent API namespace, but nothing called.** The named state is agent runtime/config state (`runtime-state`, `task-sessions`), not a harness transcript. Stop cause is now **known**: external SIGTERM, graceful. | One read-only authenticated `GET /agents` and `GET /agents/:id/runtime-state` to record the actual field shape; until then do not treat `task-sessions` as harness session inventory. Cause-of-stop needs no further work. |
+
+Ranking: **unchanged.** Tracera exiting the session lane only removes a non-candidate. Paperclip's
+upgrade is real but does not promote it: it is still auth-gated, its endpoint shapes are unverified
+(no adapter may be written against a guessed schema), and its `task-sessions` records agent task
+state rather than harness session state. ShareCLI / HERDR / Orca stay 1-2-3. The runner-up sentence
+above should now read: Paperclip is **live and reachable**, but session-shaped means authenticated
+shape discovery first — still an integration-later, not integration-first.
+
+Explicit non-claims (unchanged and extended): no adapter, bridge, broker, or consumer integration
+was written or modified; no Paperclip endpoint was called in this pass; "session-shaped endpoint"
+means a route string was observed in a bundled artifact, not that a response was ever read.
