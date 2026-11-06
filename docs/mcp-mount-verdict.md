@@ -256,3 +256,39 @@ codex-acp (it is not on the path and is not installed); and this section replace
 "three invasive options" table that assumed the payload was unknown. The pattern worth
 keeping: every wrong turn here came from reasoning about a component instead of observing
 which one actually ran.
+
+## Implementation entry point for the fix (scoped, not applied)
+
+The fork is a workspace, so this is not a one-line change. What is now known:
+
+- `jcode run` (headless) DOES register MCP: `src/cli/commands.rs:2469`
+  `registry.register_mcp_tools(None, None, None).await`, guarded by
+  `run_command_mcp_enabled()` (`:2536`, default on, `JCODE_RUN_MCP=0` to skip).
+- There are only **two** call sites in the whole tree: that one and
+  `src/cli/auth_test/choice.rs:299`. **The ACP path has none** - `src/cli/acp.rs` never
+  constructs a tool registry at all; it connects to a daemon
+  (`ensure_daemon`/`connect_daemon`, `acp.rs:851-870`) and drives a session over the wire.
+- The MCP and session-tool wiring therefore lives in a workspace crate, not in `src/cli`.
+  Root `src/` is only `bin/`, `cli/`, `herdr.rs`, `lib.rs`, `main.rs`; the workspace has
+  `crates/jcode-agent-runtime` and ~10 siblings.
+
+**Next concrete probe, before any edit:** search `crates/jcode-agent-runtime` for the
+session tool-registry construction and check whether it calls
+`register_mcp_tools`/`McpConfig::load`. Two outcomes, both actionable:
+
+- **It does not** -> the daemon never mounts MCP for wire-driven sessions; add the same
+  call the headless path makes. This is the smallest correct fix and it would make the
+  already-configured `kiro` server (14 tools, `agent_sources` included) reachable.
+- **It does, but only for some session modes** -> find the mode predicate and either widen
+  it or document why ACP sessions are excluded.
+
+Either way the change needs a `cargo build` to verify, and this repository is not where it
+belongs. Recorded here so the next session starts at the entry point instead of
+re-deriving the chain.
+
+### Why this was not applied now
+
+A blind patch in a multi-crate Rust workspace, unbuilt, would be exactly the failure mode
+this whole investigation has been documenting: a change that looks correct in the diff and
+was never observed to work. The value delivered here is the chain and the entry point, and
+they are worth more than an unverified diff.
