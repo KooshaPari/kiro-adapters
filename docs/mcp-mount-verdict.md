@@ -189,3 +189,70 @@ The "three remaining options" table above (wrap the real binary, patch the fork,
 Codex verbose logging) was written on the assumption that the payload was unknown. It is
 known now, so the cheapest path is a source read of `codex-acp`, and none of the three
 invasive options is required to reach a conclusion.
+
+## FINAL 2026-11-06: complete causal chain, with the fix located in our own fork
+
+Three observations, each measured, close this out.
+
+**1. What the codex slot actually spawns.** With `acp_backend = "codex"`, a live Crew turn
+spawns:
+
+```
+/Users/kooshapari/.jcode/builds/versions/0.99.1-kcode-mode/jcode acp -p opencode-go -m deepseek-v4.1-flash
+```
+
+That is **jcode**, reached through `CODEX_ACP_BIN` -> our shim -> `jcode acp`. It is not
+codex-acp. Supporting detail: `~/.bun/bin/codex-acp` is a **broken symlink** - it points at
+`@agentclientprotocol/codex-acp/dist/index.js` and that package directory does not exist.
+So the earlier conclusion that "the fault is in codex-acp" was wrong twice over: not only
+is codex-acp not on this path, it is not installed at all.
+
+**2. Kiro Crew's side is provably correct.** Calling the installed package's own functions
+shows the composer produces 7 entries and the codex mirror narrows them to
+`['jcode-bridge', 'kiro-inventory', 'kirocrew-core', 'kirocrew-cron']` - `kiro-inventory`
+survives with the exact command, args and type intended.
+
+**3. `jcode acp` drops the array.** `src/cli/acp.rs:1776` `validate_acp_mcp_servers` only
+*validates* that `mcpServers` is an array, and the accompanying test is named
+`non_empty_mcp_servers_are_tolerated_until_session_scoped_mcp_is_supported()`. Tolerated,
+not implemented.
+
+### The chain, stated once
+
+```
+KiroCrew composer  -> correct array (verified by direct call)
+KiroCrew mirror    -> keeps kiro-inventory (verified)
+session/new        -> contains it (verified)
+CODEX_ACP_BIN      -> our shim -> jcode acp   (verified by observing the live spawn)
+jcode acp          -> validates mcpServers, then IGNORES it (source + test name)
+                   => server never spawned, no tool, no error, nothing in any log
+```
+
+### Why the inventory tools still are not reaching the agent, and the fix
+
+`jcode` has its own native MCP config at `~/.jcode/mcp.json`, and it already declares a
+`kiro` server (the same binary) which `jcode mcp test kiro` confirms exposes **14 tools
+including `agent_sources`**. That is the normal route for a jcode session - but it is not
+reaching this ACP session either, which is consistent with the ACP adapter not wiring MCP
+at all rather than wiring it from the wrong file.
+
+**So the fix belongs in `jcode-acp-native`, not in any Kiro Crew config.** Two candidate
+shapes, in order of size:
+
+1. Make `jcode acp` mount the servers from its own `mcp.json` for the session. Smallest
+   change that makes inventory reachable, because the config already exists and is proven
+   to serve the tools.
+2. Implement session-scoped MCP properly: honour `session/new.mcpServers`, which is what
+   the existing test name already anticipates.
+
+Option 1 is the right first step: it needs no protocol work and it makes an existing,
+tested server reachable from the backend that is actually in use.
+
+### Corrections this file has had to make
+
+Three, each caught by measuring instead of trusting the previous conclusion: the doc said
+`map_event` was unwired (it is wired, in the concurrent pump); then said the fault was in
+codex-acp (it is not on the path and is not installed); and this section replaces the
+"three invasive options" table that assumed the payload was unknown. The pattern worth
+keeping: every wrong turn here came from reasoning about a component instead of observing
+which one actually ran.
