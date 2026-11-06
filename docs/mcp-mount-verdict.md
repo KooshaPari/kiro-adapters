@@ -489,3 +489,48 @@ rather than something to guess at.
   prevented.
 - **Blocked:** a Crew turn cannot exercise it until a `kcode-mode` build carries the patch,
   because vanilla v0.99.1 is refused at the `mode` gate before any tool runs.
+
+## The `kcode-mode` variant: no verifiable provenance, and no way around it
+
+The operator does not recognise this variant - it was not something they knowingly built or
+asked for. Nothing in the local state explains it:
+
+- `~/.jcode/builds/versions/0.99.1-kcode-mode/` contains a single `jcode` binary and **no
+  build receipt**: no manifest entry, no source ref, no build log.
+- `~/.jcode/builds/manifest.json` holds only leftovers from an old canary test
+  (`canary: "test-reload-hash"`, `canary_status: "testing"`, an empty `history`).
+- The fork has no `kcode-mode` tag. Branches containing `kcode` concern binaries, paths and
+  prefixes (`feature/fork-workflow-kcode-binaries`, `fix/cli-exit-status-kcode-bin`), not the
+  ACP `mode` advertisement.
+- The binary's mtime moves on every launch, because macOS ad-hoc re-signing rewrites it
+  (`replacing existing signature`), so mtime is not a build date either.
+
+So the live backend on this machine is an artifact of unknown origin that carries a
+capability vanilla upstream does not. That is worth flagging on its own, separately from
+the MCP question.
+
+### The obvious workaround does not work
+
+The natural way to satisfy Crew's gate without the variant is our own adoption shim
+(`src/jcode_bridge/acp_shim`), which advertises exactly the `modes` / `currentModeId`
+pair Crew checks. But it **refuses `session/new`** by design - it is an adopter, not a
+creator - so it cannot serve an ordinary Crew turn, only a `session/load` onto an existing
+session. Using it here would trade one refusal for another.
+
+### The two honest ways to close this
+
+1. **Locate the `kcode-mode` source and rebuild it with `4e009976e`.** Best if that source
+   exists somewhere; provenance would also be resolved at the same time.
+2. **Add the ACP `mode` config option to the fork.** Vanilla `v0.99.1` advertises
+   `configOptions` for model/reasoning only. Implementing a `mode` option with a
+   `read-only` value - and actually honouring it - is the same class of work as the
+   containment scope in `docs/ACP-CONTAINMENT-PLAN.md`, and arguably should be done
+   together, because a `mode` option that is advertised but not enforced is precisely the
+   fake containment that file exists to prevent.
+
+Option 2 is the durable one: it makes a stock jcode acceptable to Crew's gate without
+depending on an unexplained build. It is also strictly more work than a config change.
+
+**Until one of those lands, the MCP fix cannot be exercised through Kiro Crew on this
+machine** - not because the fix is wrong, but because the only backend Crew accepts is one
+I cannot rebuild.
