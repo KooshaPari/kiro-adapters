@@ -344,7 +344,7 @@
         "docs/consumer-capability-matrix.md",
         "commit f1b607a"
       ],
-      "notes": "Bounded discovery across nine products. Ranking by evidence strength over effort: ShareCLI (#1: ships `session list`/`session inspect` and a `status --json` advertising detected agent inventory), HERDR (#2: `herdr api snapshot` over a live socket, but only covers agents HERDR itself enrolled), Orca (#3: agent-hooks/endpoint.env plus last-status.json on disk). Tracera is PARTIAL - product liveness only, a bounded search found no agent-session record. Paperclip is PARTIAL and is a diagnostic task, not an integration task: HTTP API is 403-gated and the instance is currently stopped for an unknown reason. No integration code exists for any consumer, and the doc says so."
+      "notes": "CLOSED. All nine named products measured from evidence, not assumption. BUILT AND REACHABLE (verified black-box through the MCP surface, docs/mcp-reachability-check.md): ShareCLI (sharecli-session, CLI_SOURCES), HERDR (herdr-pane, CLI_SOURCES), Orca (orca-fs, FILE_SOURCES, appears by default). LEFT THE TARGET LIST with evidence: Tracera (closed negative - crates/tracera-server has no agent-session record), OmniRoute (its 'sessions' are dashboard/api-key/mcp/a2a AUTH sessions; routing a completion is not an agent session), AgilePlus (spec/work-package engine that DISPATCHES agents but observes none; agileplus-mcp exposes only spec/cycle/queue/dashboard tools), Khostty (agent protocol v1 is unspecified-unreachable: no accept loop in server.zig, no app_host, docs say 'do not build against this yet'; a pane is not a session). Discord = sink yes / runtime no, CONFIRMED: running bridge with 10 postChannels and 11 bot tokens, routes={}, and agent-wake.mjs that spawns `jcode run --resume <session_id>` from wake-sessions.json - so it is comms plus wake trigger, never a session host. Note for future attach work: Discord's wake-sessions.json maps agent id to a real harness session id, which is a write-side linkage worth reusing, not an inventory source."
     },
     {
       "id": "P18",
@@ -409,7 +409,8 @@
     "The actual session/new.mcpServers payload for one turn: without it, omission-by-array vs drop-by-transport is undecidable.",
     "Whether codex-acp MERGES session/new.mcpServers with ~/.codex/config.toml or replaces it. Codex-side delivery is proven; Crew-side is not, and this is the discriminator.",
     "Whether codex-acp MERGES or REPLACES session/new.mcpServers with ~/.codex/config.toml - Crew's composer mounts the entry and Codex-side delivery is proven, yet a Crew turn still never calls the tool.",
-    "Windows identity is now proven on hardware for the caller's own process; binding pids belonging to other users remains untested there."
+    "Windows identity is now proven on hardware for the caller's own process; binding pids belonging to other users remains untested there.",
+    "Discord's wake-sessions.json maps agent ids to real harness session ids; it is a write-side linkage nobody has used yet."
   ],
   "measured_host_state": {
     "gateway_service": "dev.kirocrew.gateway (launchd), healthy",
