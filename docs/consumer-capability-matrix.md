@@ -92,3 +92,37 @@ shape discovery first — still an integration-later, not integration-first.
 Explicit non-claims (unchanged and extended): no adapter, bridge, broker, or consumer integration
 was written or modified; no Paperclip endpoint was called in this pass; "session-shaped endpoint"
 means a route string was observed in a bundled artifact, not that a response was ever read.
+
+
+## 2026-11-06 — settling the last two rows (AgilePlus, Khostty)
+
+Scope: read-only discovery. No service started, no config changed, no build run. Searches bounded to
+`~/CodeProjects/Phenotype/repos/{AgilePlus,khostty}` (top-level listing + targeted greps), `/Applications`
+(name filter), `~/.config` (listing), and `command -v`. Absence is recorded as *unproven*, never as
+"does not exist".
+
+| product | installed? (path) | surface | evidence (file:line or `--help` line) | class | smallest useful next step |
+|---|---|---|---|---|---|
+| **AgilePlus** | yes — `/Users/kooshapari/.local/bin/agileplus`; source `~/CodeProjects/Phenotype/repos/AgilePlus` (Rust workspace + `agileplus-mcp/` Python) | Spec/feature-management + work-package DAG engine. Exposes a read-only state DB (`~/Library/Application Support/AgilePlus/state/core.db`) and CLI verbs (`dashboard`, `cockpit`, `dag`, `list`, `implement`). `implement` *dispatches* agents, but nothing observes them. | `agileplus --help` → `implement  Implement work packages (dispatches agents)`; `agileplus-mcp/mcp-tools.json` describes only spec/cycle/queue/dashboard tools (no session/agent tool); `crates/agileplus-api/src/routes` grep for `session` returned zero hits; `crates/agileplus-grpc/src` grep for `session` returned zero hits; `crates/agileplus-domain/src/config/agents.rs` is config only (`default_agent`, `max_subagents`), no session store. | **NOT AN AGENT-SESSION CONSUMER.** Tracks work items an agent might report into; does not run or observe agent sessions. | Leave the target list. AgilePlus is acceptance authority, not session inventory. If an agent-session link is ever wanted, it would be a write-side integration (agent reports a WP state), not a read-side attach. |
+| **Khostty** | source yes — `~/CodeProjects/Phenotype/repos/khostty` (+`khostty-wtrees`); binary no (`command -v khostty` → NONE); terminal present `/Applications/Ghostty.app` 1.3.1 | Terminal emulator + in-process VT library. Documented agent protocol v1 is **not reachable**: no server listens. | `docs/AGENT.md` §1: pane create/write/focus/query are "In-process only today"; §4.2: `src/apprt/ipc/protocol.md` specifies 13 commands (`pane.*`, `events.*`) but `server.zig` (no accept loop), `app_host.zig` (no app-backed host), and runtime wiring are all missing; "Do not build against this yet." `ghostty +list-actions` filtered for `session`/`agent`/`list` returned no matches (only `write_scrollback_file`, `write_screen_file`, `write_selection_file`). No `khostty` config under `~/.config` or cache under `~/Library/Caches`. | **NO AGENT-SESSION SURFACE.** A pane is not an agent session; the only reachable agent-facing capability is in-process terminal observation (`libghostty-vt`), which is a display/VT surface, not session inventory. | Leave the target list. Revisit only when `server.zig` + `app_host.zig` + runtime wiring land and a socket actually listens (then classify as terminal/pane surface, still not agent-session inventory). |
+
+### Conclusion
+
+Both products should **leave the target list** rather than remain `PARTIAL`:
+
+- **AgilePlus** is a spec/feature-management and acceptance tool. It *dispatches* agents
+  (`implement`) and tracks work packages, but persists no agent-session record and exposes no
+  session/agent endpoint (MCP tools, gRPC, and API routes all confirmed session-free). It is not
+  an agent-session consumer; it is acceptance authority.
+- **Khostty** is a terminal emulator. Its only agent-facing capability today is in-process VT
+  observation; the documented IPC agent protocol has no running server. A terminal pane is not an
+  agent session, so conflating them would be exactly the overclaim this matrix exists to prevent.
+
+Neither should be counted among the session-inventory consumers (ShareCLI, HERDR, Orca remain the
+top three). AgilePlus and Khostty stay in the matrix as rows for traceability but are marked
+non-consumers, not PARTIAL.
+
+Explicit non-claims (extended): no Khostty IPC socket was connected (none exists to connect to);
+no AgilePlus endpoint beyond `--help` and on-disk source was exercised; "no session tool" means no
+such tool in `mcp-tools.json` and no such route in the searched crates, not a proof of absence
+everywhere in the repo.
