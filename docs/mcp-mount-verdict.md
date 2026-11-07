@@ -534,3 +534,61 @@ depending on an unexplained build. It is also strictly more work than a config c
 **Until one of those lands, the MCP fix cannot be exercised through Kiro Crew on this
 machine** - not because the fix is wrong, but because the only backend Crew accepts is one
 I cannot rebuild.
+
+## The actual terminus: read-only mode denies every MCP tool, on purpose
+
+With the fix in the **correct** repository (`repos/jcode`, package `kcode` - which is what
+`0.99.1-kcode-mode` is), Kiro Crew's ACP `mode` gate is finally satisfied and the turn runs.
+The session then reports: *"no MCP tools are exposed in this session (only file
+read/search/grep)"*.
+
+That is not a defect. `src/cli/acp/permission_mode.rs:111-117`:
+
+```rust
+"elicitate_mcp",
+// Every MCP tool. The name is a prefix match in the daemon's own policy
+// check, so this one entry covers `mcp_call`, `mcp_search` and every
+// `mcp__<server>__<tool>` an MCP server contributed. Without it a
+// read-only session could still reach an MCP server and change remote
+// data through it.
+"mcp",
+```
+
+Kiro Crew requires `mode=read-only` (its own gate, and the reason only a `kcode` build is
+accepted). `kcode`'s read-only mode denies the literal prefix `mcp`, which covers **every**
+MCP tool including `agent_sources`. So in a Crew session, an MCP tool can never be callable,
+whatever the registration path does.
+
+### So the whole chain, finally complete
+
+```
+Crew requires mode=read-only        (its ACP gate)
+  -> only a `kcode` build satisfies it   (vanilla jcode advertises no `mode`)
+  -> kcode read-only denies prefix "mcp" (deliberate: MCP can mutate remote data)
+  => agent_sources is unreachable in a Crew session BY DESIGN
+```
+
+Everything upstream of that is now proven working: composer, mirror, `session/new` array,
+registration on resume (the `!target_is_live` fix), and the binary being accepted at the
+mode gate. The remaining obstacle is a **policy**, and a defensible one.
+
+### What would actually close the original goal
+
+A per-server trust allowance: let a read-only session reach a **named, declared
+read-only** MCP server, rather than blanket-denying the `mcp` prefix. That needs kcode to
+carry per-server trust metadata (the same shape as `identity_bound_crew_servers` and the
+`disabled_tools` restrictions already modelled in Crew's mirror), plus an explicit operator
+grant. It is a policy feature in `kcode`, not a bug fix, and it should be designed together
+with the containment work in `docs/ACP-CONTAINMENT-PLAN.md` because both are about letting
+a specific capability through a general denial.
+
+### Verdict on the original item
+
+The original ask - "can Kiro Crew read our agent inventory" - has a precise answer now:
+**not through a Crew session today, by design**, and the smallest design change that would
+allow it is a trusted-read-only-MCP allowlist in `kcode`. The inventory server itself is
+correct, reachable, and serves 14 tools; it is the session mode that excludes it.
+
+Two genuine fixes came out of this regardless, both worth keeping:
+`!target_is_live` (`kcode` `213656068`, and the same in `jcode-acp-native` `4e009976e`),
+which makes a resumed session register MCP at all.
